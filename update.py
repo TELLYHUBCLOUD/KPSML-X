@@ -71,7 +71,7 @@ if DATABASE_URL is not None:
 UPGRADE_PACKAGES = environ.get('UPGRADE_PACKAGES', 'False') 
 if UPGRADE_PACKAGES.lower() == 'true':
     packages = [dist.project_name for dist in working_set]
-    scall("pip install " + ' '.join(packages), shell=True)
+    scall("uv pip install --system " + ' '.join(packages), shell=True)
 
 UPSTREAM_REPO = environ.get('UPSTREAM_REPO', '')
 if len(UPSTREAM_REPO) == 0:
@@ -79,15 +79,15 @@ if len(UPSTREAM_REPO) == 0:
 
 UPSTREAM_BRANCH = environ.get('UPSTREAM_BRANCH', '')
 if len(UPSTREAM_BRANCH) == 0:
-    UPSTREAM_BRANCH = 'hk_kpsmlx'
+    UPSTREAM_BRANCH = 'kpsmlx'
 
 if UPSTREAM_REPO is not None:
     if ospath.exists('.git'):
         srun(["rm", "-rf", ".git"])
 
     update = srun([f"git init -q \
-                     && git config --global user.email doc.adhikari@gmail.com \
-                     && git config --global user.name weebzone \
+                     && git config --global user.email kpstorrent@gmail.com \
+                     && git config --global user.name kpsbots \
                      && git add . \
                      && git commit -sm update -q \
                      && git remote add origin {UPSTREAM_REPO} \
