@@ -6,7 +6,7 @@ from urllib.parse import quote
 from aiohttp import ClientSession
 from cloudscraper import create_scraper
 from urllib3 import disable_warnings
-from bot import LOGGER, shorteners_list
+from ... import LOGGER, shortener_dict
 
 # Cloudflare Worker URL
 WORKER_URL = "https://tellylinks.tellycloudapi.workers.dev/shorten"
