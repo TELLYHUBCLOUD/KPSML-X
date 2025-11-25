@@ -13,14 +13,19 @@ from bot.helper.telegram_helper.message_utils import (sendMessage,
 
 
 async def add_direct_download(details, path, listener, foldername):
-    if not (contents:= details.get('contents')):
-        await sendMessage(listener.message, 'There is nothing to download!')
+    """
+    Adds a direct download task.
+    """
+    if not (contents := details.get('contents')):
+        await sendMessage(listener.message, 'No content to download.')
         return
+
     size = details['total_size']
 
     if not foldername:
         foldername = details['title']
     path = f'{path}/{foldername}'
+
     msg, button = await stop_duplicate_check(foldername, listener)
     if msg:
         await sendMessage(listener.message, msg, button)
@@ -28,11 +33,11 @@ async def add_direct_download(details, path, listener, foldername):
 
     gid = token_hex(5)
     added_to_queue, event = await is_queued(listener.uid)
+
     if added_to_queue:
-        LOGGER.info(f"Added to Queue/Download: {foldername}")
+        LOGGER.info(f"Added to queue/download: {foldername}")
         async with download_dict_lock:
-            download_dict[listener.uid] = QueueStatus(
-                foldername, size, gid, listener, 'dl')
+            download_dict[listener.uid] = QueueStatus(foldername, size, gid, listener, 'dl')
         await listener.onDownloadStart()
         await sendStatusMessage(listener.message)
         await event.wait()
@@ -44,23 +49,25 @@ async def add_direct_download(details, path, listener, foldername):
         from_queue = False
 
     a2c_opt = {**aria2_options}
-    [a2c_opt.pop(k) for k in aria2c_global if k in aria2_options]
-    if header:= details.get('header'):
+    [a2c_opt.pop(k, None) for k in aria2c_global if k in aria2_options]
+    if header := details.get('header'):
         a2c_opt['header'] = header
     a2c_opt['follow-torrent'] = 'false'
     a2c_opt['follow-metalink'] = 'false'
-    directListener = DirectListener(foldername, size, path, listener, a2c_opt)
+
+    direct_listener = DirectListener(foldername, size, path, listener, a2c_opt)
+
     async with download_dict_lock:
-        download_dict[listener.uid] = DirectStatus(directListener, gid, listener, listener.upload_details)
+        download_dict[listener.uid] = DirectStatus(direct_listener, gid, listener, listener.upload_details)
 
     async with queue_dict_lock:
         non_queued_dl.add(listener.uid)
 
     if from_queue:
-        LOGGER.info(f'Start Queued Download from Direct Download: {foldername}')
+        LOGGER.info(f'Starting queued direct download: {foldername}')
     else:
-        LOGGER.info(f"Download from Direct Download: {foldername}")
+        LOGGER.info(f"Starting direct download: {foldername}")
         await listener.onDownloadStart()
         await sendStatusMessage(listener.message)
 
-    await sync_to_async(directListener.download, contents)
+    await sync_to_async(direct_listener.download, contents)

@@ -12,61 +12,78 @@ from bot.helper.ext_utils.bot_utils import sync_to_async, new_task, is_gdrive_li
 
 
 @new_task
-async def driveclean(_, message):
-    args = message.text.split()
-    if len(args) > 1:
-        link = args[1].strip()
+async def drive_clean(_, message):
+    """
+    Cleans a Google Drive folder by moving its contents to trash or deleting them permanently.
+    """
+    if len(message.command) > 1:
+        link = message.command[1].strip()
     elif reply_to := message.reply_to_message:
         link = reply_to.text.split(maxsplit=1)[0].strip()
     else:
-        link = f"https://drive.google.com/drive/folders/{config_dict['GDRIVE_ID']}"
+        link = f"https://drive.google.com/drive/folders/{config_dict.get('GDRIVE_ID')}"
+
     if not is_gdrive_link(link):
-        return await sendMessage(message, 'No GDrive Link Provided')
-    clean_msg = await sendMessage(message, '<i>Fetching ...</i>')
+        await sendMessage(message, 'Please provide a valid GDrive link.')
+        return
+
+    status_msg = await sendMessage(message, '<i>Fetching folder data...</i>')
+
     gd = GoogleDriveHelper()
     name, mime_type, size, files, folders = await sync_to_async(gd.count, link)
+
     try:
         drive_id = GoogleDriveHelper.getIdFromUrl(link)
     except (KeyError, IndexError):
-        return await editMessage(clean_msg, "Google Drive ID could not be found in the provided link")
+        await editMessage(status_msg, "Invalid G-Drive ID in the link.")
+        return
+
     buttons = ButtonMaker()
-    buttons.ibutton('Move to Bin', f'gdclean clear {drive_id} trash')
-    buttons.ibutton('Permanent Clean', f'gdclean clear {drive_id}')
-    buttons.ibutton('Stop GDrive Clean', 'gdclean stop', 'footer')
-    await editMessage(clean_msg, f'''⌬ <b><i>GDrive Clean/Trash :</i></b>
+    buttons.ibutton('♻️ Move to Bin', f'gdclean clear {drive_id} trash')
+    buttons.ibutton('🗑️ Permanent Clean', f'gdclean clear {drive_id}')
+    buttons.ibutton('❌ Stop', 'gdclean stop', 'footer')
     
-┎ <b>Name:</b> {name}
-┃ <b>Size:</b> {get_readable_file_size(size)}
-┖ <b>Files:</b> {files} | <b>Folders:</b> {folders}
-    
-<b>NOTES:</b>
-<i>1. All files are permanently deleted if Permanent Del, not moved to trash.
-2. Folder doesn't gets Deleted.
-3. Delete files of custom folder via giving link along with cmd, but it should have delete permissions.
-4. Move to Bin Moves all your files to trash but can be restored again if have permissions.</i>
-    
-<code>Choose the Required Action below to Clean your Drive!</code>''', buttons.build_menu(2))
+    await editMessage(
+        status_msg,
+        f'<b>🧹 GDrive Clean/Trash</b>\n\n'
+        f'<b>Name:</b> {name}\n'
+        f'<b>Size:</b> {get_readable_file_size(size)}\n'
+        f'<b>Files:</b> {files} | <b>Folders:</b> {folders}\n\n'
+        '<b>Notes:</b>\n'
+        '1. Files will be permanently deleted if "Permanent Clean" is chosen.\n'
+        '2. The folder itself will not be deleted.\n'
+        '3. Use a custom folder link to clean a specific folder.\n'
+        '4. "Move to Bin" will move files to trash for easy restoration.\n\n'
+        'Choose an action below:',
+        buttons.build_menu(2)
+    )
 
 
 @new_task
-async def drivecleancb(_, query):
+async def drive_clean_callback(_, query):
+    """
+    Handles the callback query for the GDrive clean command.
+    """
     message = query.message
     user_id = query.from_user.id
     data = query.data.split()
+
     if user_id != OWNER_ID:
-        await query.answer(text="Not Owner!", show_alert=True)
+        await query.answer("This is not for you!", show_alert=True)
         return
+
     if data[1] == "clear":
         await query.answer()
-        await editMessage(message, '<i>Processing Drive Clean / Trash...</i>')
+        await editMessage(message, '<i>Processing GDrive Clean/Trash...</i>')
         drive = GoogleDriveHelper()
-        msg = await sync_to_async(drive.driveclean, data[2], trash=len(data)==4)
-        await editMessage(message, msg)
+        is_trash = len(data) == 4 and data[3] == 'trash'
+        result_msg = await sync_to_async(drive.driveclean, data[2], trash=is_trash)
+        await editMessage(message, result_msg)
     elif data[1] == "stop":
         await query.answer()
-        await editMessage(message, '⌬ <b>DriveClean Stopped!</b>')
+        await editMessage(message, '<b>GDrive Clean has been stopped.</b>')
         await auto_delete_message(message, message)
         
 
-bot.add_handler(MessageHandler(driveclean, filters=command(BotCommands.GDCleanCommand) & CustomFilters.owner))
-bot.add_handler(CallbackQueryHandler(drivecleancb, filters=regex(r'^gdclean')))
+bot.add_handler(MessageHandler(drive_clean, filters=command(BotCommands.GDCleanCommand) & CustomFilters.owner))
+bot.add_handler(CallbackQueryHandler(drive_clean_callback, filters=regex(r'^gdclean')))

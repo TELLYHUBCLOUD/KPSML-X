@@ -13,67 +13,90 @@ from bot.helper.ext_utils.bot_utils import sync_to_async, new_task, get_telegrap
 from bot.helper.themes import BotTheme
 
 
-async def list_buttons(user_id, isRecursive=True):
+async def list_buttons(user_id, is_recursive=True):
+    """
+    Creates buttons for GDrive list options.
+    """
     buttons = ButtonMaker()
-    buttons.ibutton("Only Folders", f"list_types {user_id} folders {isRecursive}")
-    buttons.ibutton("Only Files", f"list_types {user_id} files {isRecursive}")
-    buttons.ibutton("Both", f"list_types {user_id} both {isRecursive}")
-    buttons.ibutton(f"{'✅️' if isRecursive else ''} Recursive", f"list_types {user_id} rec {isRecursive}")
+    buttons.ibutton("Folders", f"list_types {user_id} folders {is_recursive}")
+    buttons.ibutton("Files", f"list_types {user_id} files {is_recursive}")
+    buttons.ibutton("Both", f"list_types {user_id} both {is_recursive}")
+    buttons.ibutton(f"{'✅ ' if is_recursive else ''}Recursive", f"list_types {user_id} rec {is_recursive}")
     buttons.ibutton("Cancel", f"list_types {user_id} cancel")
     return buttons.build_menu(2)
 
 
-async def _list_drive(key, message, user_id, item_type, isRecursive):
+async def _list_drive(key, message, user_id, item_type, is_recursive):
+    """
+    Performs a GDrive search and sends the results.
+    """
     LOGGER.info(f"GDrive List: {key}")
     gdrive = GoogleDriveHelper()
-    telegraph_content, contents_no = await sync_to_async(gdrive.drive_list, key, isRecursive=isRecursive, itemType=item_type, userId=user_id)
+    telegraph_content, contents_no = await sync_to_async(gdrive.drive_list, key, isRecursive=is_recursive, itemType=item_type, userId=user_id)
+
     if telegraph_content:
         try:
             button = await get_telegraph_list(telegraph_content)
+            msg = f"Found {contents_no} results for <code>{key}</code>."
+            await editMessage(message, msg, button)
         except Exception as e:
-            await editMessage(message, e)
-            return
-        msg = BotTheme('LIST_FOUND', NO=contents_no, NAME=key)
-        await editMessage(message, msg, button)
+            await editMessage(message, str(e))
     else:
-        await editMessage(message, BotTheme('LIST_NOT_FOUND', NAME=key))
+        await editMessage(message, f"No results found for <code>{key}</code>.")
 
 
 @new_task
 async def select_type(_, query):
+    """
+    Handles the callback query for selecting list options.
+    """
     user_id = query.from_user.id
     message = query.message
     key = message.reply_to_message.text.split(maxsplit=1)[1].strip()
     data = query.data.split()
+
     if user_id != int(data[1]):
-        return await query.answer(text="Not Yours!", show_alert=True)
-    elif data[2] == 'rec':
+        await query.answer("This is not for you!", show_alert=True)
+        return
+
+    action = data[2]
+    is_recursive = eval(data[3]) if len(data) > 3 else True
+
+    if action == 'rec':
         await query.answer()
-        isRecursive = not bool(eval(data[3]))
-        buttons = await list_buttons(user_id, isRecursive)
-        return await editMessage(message, '<b>Choose drive list options:</b>', buttons)
-    elif data[2] == 'cancel':
+        is_recursive = not is_recursive
+        buttons = await list_buttons(user_id, is_recursive)
+        await editMessage(message, 'Choose list options:', buttons)
+        return
+
+    if action == 'cancel':
         await query.answer()
-        return await editMessage(message, "<b>List has been canceled!</b>")
+        await editMessage(message, "List has been cancelled.")
+        return
+
     await query.answer()
-    item_type = data[2]
-    isRecursive = eval(data[3])
-    await editMessage(message, BotTheme('LIST_SEARCHING', NAME=key))
-    await _list_drive(key, message, user_id, item_type, isRecursive)
+    item_type = action
+    await editMessage(message, f"Searching for <code>{key}</code>...")
+    await _list_drive(key, message, user_id, item_type, is_recursive)
 
 
 async def drive_list(_, message):
-    args = message.text.split() if message.text else ['/cmd']
-    if len(args) == 1:
-        return await sendMessage(message, '<i>Send a search key along with command</i>')
+    """
+    Entry point for the GDrive list command.
+    """
+    if len(message.command) == 1:
+        await sendMessage(message, 'Please provide a search query.')
+        return
+
     user_id = message.from_user.id
     msg, btn = await checking_access(user_id)
-    if msg is not None:
-        await sendMessage(message, msg, btn.build_menu(1))
+    if msg:
+        await sendMessage(message, msg, btn.build_menu(1) if btn else None)
         return
-    buttons = await list_buttons(user_id)
-    await sendMessage(message, '<b>Choose drive list options:</b>', buttons, 'IMAGES')
 
-bot.add_handler(MessageHandler(drive_list, filters=command(
-    BotCommands.ListCommand) & CustomFilters.authorized & ~CustomFilters.blacklisted))
+    buttons = await list_buttons(user_id)
+    await sendMessage(message, 'Choose list options:', buttons, 'IMAGES')
+
+
+bot.add_handler(MessageHandler(drive_list, filters=command(BotCommands.ListCommand) & CustomFilters.authorized & ~CustomFilters.blacklisted))
 bot.add_handler(CallbackQueryHandler(select_type, filters=regex("^list_types")))

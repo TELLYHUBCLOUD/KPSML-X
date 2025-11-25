@@ -13,6 +13,9 @@ from bot.helper.mirror_utils.rclone_utils.transfer import RcloneTransferHelper
 
 
 async def add_rclone_download(rc_path, config_path, path, name, listener):
+    """
+    Adds an rclone download task.
+    """
     remote, rc_path = rc_path.split(':', 1)
     rc_path = rc_path.strip('/')
 
@@ -20,27 +23,31 @@ async def add_rclone_download(rc_path, config_path, path, name, listener):
             '--no-modtime', '--config', config_path, f'{remote}:{rc_path}']
     cmd2 = [bot_cache['pkgs'][3], 'size', '--fast-list', '--json',
             '--config', config_path, f'{remote}:{rc_path}']
+
     res1, res2 = await gather(cmd_exec(cmd1), cmd_exec(cmd2))
-    if res1[2] != res2[2] != 0:
+
+    if res1[2] != 0 or res2[2] != 0:
         if res1[2] != -9:
             err = res1[1] or res2[1]
-            msg = f'Error: While getting rclone stat/size. Path: {remote}:{rc_path}. Stderr: {err[:4000]}'
-            await sendMessage(listener.message, msg)
+            await sendMessage(listener.message, f'Rclone error: {err[:4000]}')
         return
+
     try:
         rstat = loads(res1[0])
         rsize = loads(res2[0])
     except Exception as err:
-        await sendMessage(listener.message, f'RcloneDownload JsonLoad: {err}')
+        await sendMessage(listener.message, f'Rclone JSON load error: {err}')
         return
+
     if rstat['IsDir']:
-        if not name:
-            name = rc_path.rsplit('/', 1)[-1] if rc_path else remote
+        name = name or (rc_path.rsplit('/', 1)[-1] if rc_path else remote)
         path += name
     else:
         name = rc_path.rsplit('/', 1)[-1]
+
     size = rsize['bytes']
     gid = token_hex(5)
+
     msg, button = await stop_duplicate_check(name, listener)
     if msg:
         await sendMessage(listener.message, msg, button)
@@ -48,10 +55,9 @@ async def add_rclone_download(rc_path, config_path, path, name, listener):
 
     added_to_queue, event = await is_queued(listener.uid)
     if added_to_queue:
-        LOGGER.info(f"Added to Queue/Download: {name}")
+        LOGGER.info(f"Added to queue/download: {name}")
         async with download_dict_lock:
-            download_dict[listener.uid] = QueueStatus(
-                name, size, gid, listener, 'dl')
+            download_dict[listener.uid] = QueueStatus(name, size, gid, listener, 'dl')
         await listener.onDownloadStart()
         await sendStatusMessage(listener.message)
         await event.wait()
@@ -62,18 +68,17 @@ async def add_rclone_download(rc_path, config_path, path, name, listener):
     else:
         from_queue = False
 
-    RCTransfer = RcloneTransferHelper(listener, name)
+    rc_transfer = RcloneTransferHelper(listener, name)
     async with download_dict_lock:
-        download_dict[listener.uid] = RcloneStatus(
-            RCTransfer, listener.message, gid, 'dl', listener.upload_details)
+        download_dict[listener.uid] = RcloneStatus(rc_transfer, listener.message, gid, 'dl', listener.upload_details)
     async with queue_dict_lock:
         non_queued_dl.add(listener.uid)
 
     if from_queue:
-        LOGGER.info(f'Start Queued Download with rclone: {rc_path}')
+        LOGGER.info(f'Starting queued rclone download: {rc_path}')
     else:
         await listener.onDownloadStart()
         await sendStatusMessage(listener.message)
-        LOGGER.info(f"Download with rclone: {rc_path}")
+        LOGGER.info(f"Starting rclone download: {rc_path}")
 
-    await RCTransfer.download(remote, rc_path, config_path, path)
+    await rc_transfer.download(remote, rc_path, config_path, path)

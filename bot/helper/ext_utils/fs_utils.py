@@ -23,76 +23,99 @@ SPLIT_REGEX = r'\.r\d+$|\.7z\.\d+$|\.z\d+$|\.zip\.\d+$'
 
 
 def is_first_archive_split(file):
+    """
+    Checks if a file is the first part of a split archive.
+    """
     return bool(re_search(FIRST_SPLIT_REGEX, file))
 
 
 def is_archive(file):
+    """
+    Checks if a file is an archive.
+    """
     return file.endswith(tuple(ARCH_EXT))
 
 
 def is_archive_split(file):
+    """
+    Checks if a file is part of a split archive.
+    """
     return bool(re_search(SPLIT_REGEX, file))
 
 
 async def clean_target(path):
+    """
+    Cleans a target path by removing the file or directory.
+    """
     if await aiopath.exists(path):
-        LOGGER.info(f"Cleaning Target: {path}")
-        if await aiopath.isdir(path):
-            try:
+        LOGGER.info(f"🧹 Cleaning Target: {path}")
+        try:
+            if await aiopath.isdir(path):
                 await aiormtree(path)
-            except Exception:
-                pass
-        elif await aiopath.isfile(path):
-            try:
+            else:
                 await aioremove(path)
-            except Exception:
-                pass
+        except Exception as e:
+            LOGGER.error(f"Failed to clean target {path}: {e}")
 
 
 async def clean_download(path):
+    """
+    Cleans a download path by removing the directory.
+    """
     if await aiopath.exists(path):
-        LOGGER.info(f"Cleaning Download: {path}")
+        LOGGER.info(f"🧹 Cleaning Download: {path}")
         try:
             await aiormtree(path)
-        except Exception:
-            pass
+        except Exception as e:
+            LOGGER.error(f"Failed to clean download {path}: {e}")
 
 
 async def start_cleanup():
+    """
+    Starts a cleanup by deleting all torrents and recreating the download directory.
+    """
     get_client().torrents_delete(torrent_hashes="all")
     try:
         await aiormtree(DOWNLOAD_DIR)
-    except Exception:
-        pass
+    except Exception as e:
+        LOGGER.error(f"Failed to clean download directory: {e}")
     await makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
 def clean_all():
+    """
+    Cleans all downloads from aria2 and qBittorrent, and removes the download directory.
+    """
     aria2.remove_all(True)
     get_client().torrents_delete(torrent_hashes="all")
     try:
         rmtree(DOWNLOAD_DIR)
-    except Exception:
-        pass
+    except Exception as e:
+        LOGGER.error(f"Failed to remove download directory: {e}")
 
 
 def exit_clean_up(signal, frame):
+    """
+    Cleans up and exits the bot gracefully.
+    """
     try:
-        LOGGER.info(
-            "Please wait, while we clean up and stop the running downloads")
+        LOGGER.info("⏳ Please wait, cleaning up and stopping running downloads...")
         clean_all()
         srun(['pkill', '-9', '-f', f'gunicorn|{bot_cache["pkgs"][-1]}'])
         sexit(0)
     except KeyboardInterrupt:
-        LOGGER.warning("Force Exiting before the cleanup finishes!")
+        LOGGER.warning("⚠️ Force exiting before cleanup finishes!")
         sexit(1)
 
 
 async def clean_unwanted(path):
-    LOGGER.info(f"Cleaning unwanted files/folders: {path}")
+    """
+    Cleans unwanted files and folders from a path.
+    """
+    LOGGER.info(f"🧹 Cleaning unwanted files/folders in: {path}")
     for dirpath, _, files in await sync_to_async(walk, path, topdown=False):
         for filee in files:
-            if filee.endswith(".!qB") or filee.endswith('.parts') and filee.startswith('.'):
+            if filee.endswith(".!qB") or (filee.endswith('.parts') and filee.startswith('.')):
                 await aioremove(ospath.join(dirpath, filee))
         if dirpath.endswith((".unwanted", "splited_files_mltb", "copied_mltb")):
             await aiormtree(dirpath)
@@ -102,6 +125,9 @@ async def clean_unwanted(path):
 
 
 async def get_path_size(path):
+    """
+    Gets the total size of a path (file or directory).
+    """
     if await aiopath.isfile(path):
         return await aiopath.getsize(path)
     total_size = 0
@@ -113,6 +139,9 @@ async def get_path_size(path):
 
 
 async def count_files_and_folders(path):
+    """
+    Counts the number of files and folders in a path.
+    """
     total_files = 0
     total_folders = 0
     for _, dirs, files in await sync_to_async(walk, path):
@@ -125,37 +154,42 @@ async def count_files_and_folders(path):
 
 
 def get_base_name(orig_path):
+    """
+    Gets the base name of a file without its archive extension.
+    """
     extension = next(
         (ext for ext in ARCH_EXT if orig_path.lower().endswith(ext)), ''
     )
-    if extension != '':
+    if extension:
         return re_split(f'{extension}$', orig_path, maxsplit=1, flags=I)[0]
-    else:
-        raise NotSupportedExtractionArchive(
-            'File format not supported for extraction')
+    raise NotSupportedExtractionArchive('File format not supported for extraction')
 
 
 def get_mime_type(file_path):
+    """
+    Gets the mime type of a file.
+    """
     mime = Magic(mime=True)
-    mime_type = mime.from_file(file_path)
-    mime_type = mime_type or "text/plain"
-    return mime_type
+    return mime.from_file(file_path) or "text/plain"
 
 
 def check_storage_threshold(size, threshold, arch=False, alloc=False):
+    """
+    Checks if there is enough free storage to download a file.
+    """
     free = disk_usage(DOWNLOAD_DIR).free
     if not alloc:
-        if (not arch and free - size < threshold or arch and free - (size * 2) < threshold):
-            return False
-    elif not arch:
-        if free < threshold:
-            return False
-    elif free - size < threshold:
-        return False
-    return True
+        required = size * 2 if arch else size
+        return free - required >= threshold
+    if not arch:
+        return free >= threshold
+    return free - size >= threshold
 
 
 async def join_files(path):
+    """
+    Joins split binary files in a directory.
+    """
     files = await listdir(path)
     results = []
     for file_ in files:
@@ -164,14 +198,15 @@ async def join_files(path):
             cmd = f'cat {path}/{final_name}.* > {path}/{final_name}'
             _, stderr, code = await cmd_exec(cmd, True)
             if code != 0:
-                LOGGER.error(f'Failed to join {final_name}, stderr: {stderr}')
+                LOGGER.error(f'⛔️ Failed to join {final_name}, stderr: {stderr}')
             else:
                 results.append(final_name)
-        else:
-            LOGGER.warning('No Binary files to join!')
-    if results:
-        LOGGER.info('Join Completed!')
-        for res in results:
-            for file_ in files:
-                if re_search(fr"{res}\.0[0-9]+$", file_):
-                    await aioremove(f'{path}/{file_}')
+    if not results:
+        LOGGER.warning('🤔 No binary files to join!')
+        return
+
+    LOGGER.info('✅ Join completed!')
+    for res in results:
+        for file_ in files:
+            if re_search(fr"{res}\.0[0-9]+$", file_):
+                await aioremove(f'{path}/{file_}')

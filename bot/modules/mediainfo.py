@@ -6,7 +6,7 @@ from aiofiles import open as aiopen
 from aiofiles.os import remove as aioremove, path as aiopath, mkdir
 from os import path as ospath, getcwd
 
-from pyrogram.handlers import MessageHandler 
+from pyrogram.handlers import MessageHandler
 from pyrogram.filters import command
 
 from bot import LOGGER, bot, config_dict
@@ -18,21 +18,25 @@ from bot.helper.ext_utils.telegraph_helper import telegraph
 
 
 async def gen_mediainfo(message, link=None, media=None, mmsg=None):
-    temp_send = await sendMessage(message, '<i>Generating MediaInfo...</i>')
+    """
+    Generates MediaInfo for a given file or link.
+    """
+    status_msg = await sendMessage(message, '<i>Generating MediaInfo...</i>')
+
+    path = "Mediainfo/"
+    if not await aiopath.isdir(path):
+        await mkdir(path)
+
+    des_path = ""
     try:
-        path = "Mediainfo/"
-        if not await aiopath.isdir(path):
-            await mkdir(path)
         if link:
-            filename = re_search(".+/(.+)", link).group(1)
+            filename = re_search(r'/(.+)$', link).group(1)
             des_path = ospath.join(path, filename)
-            headers = {"user-agent":"Mozilla/5.0 (Linux; Android 12; 2201116PI) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Mobile Safari/537.36"}
-            async with ClientSession() as session:
-                async with session.get(link, headers=headers) as response:
-                    async with aiopen(des_path, "wb") as f:
-                        async for chunk in response.content.iter_chunked(10000000):
-                            await f.write(chunk)
-                            break
+            headers = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.77 Safari/537.36"}
+            async with ClientSession() as session, session.get(link, headers=headers) as response, aiopen(des_path, "wb") as f:
+                async for chunk in response.content.iter_chunked(10000000):
+                    await f.write(chunk)
+                    break
         elif media:
             des_path = ospath.join(path, media.file_name)
             if media.file_size <= 50000000:
@@ -41,69 +45,68 @@ async def gen_mediainfo(message, link=None, media=None, mmsg=None):
                 async for chunk in bot.stream_media(media, limit=5):
                     async with aiopen(des_path, "ab") as f:
                         await f.write(chunk)
+
         stdout, _, _ = await cmd_exec(ssplit(f'mediainfo "{des_path}"'))
-        tc = f"<h4>📌 {ospath.basename(des_path)}</h4><br><br>"
-        if len(stdout) != 0:
-            tc += parseinfo(stdout)
+
+        if stdout:
+            tc = f"<h4>{ospath.basename(des_path)}</h4><br><br>{parse_info(stdout)}"
+            link_id = (await telegraph.create_page(title='MediaInfo', content=tc))["path"]
+            await status_msg.edit(f"<b>MediaInfo:</b>\n\n🔗 https://graph.org/{link_id}", disable_web_page_preview=False)
+        else:
+            await editMessage(status_msg, "Failed to generate MediaInfo.")
+
     except Exception as e:
-        LOGGER.error(e)
-        await editMessage(temp_send, f"MediaInfo Stopped due to {str(e)}")
+        LOGGER.error(f"MediaInfo error: {e}")
+        await editMessage(status_msg, f"MediaInfo generation failed: {e}")
     finally:
-        await aioremove(des_path)
-    link_id = (await telegraph.create_page(title='MediaInfo X', content=tc))["path"]
-    await temp_send.edit(f"<b>MediaInfo:</b>\n\n➲ <b>Link :</b> https://graph.org/{link_id}", disable_web_page_preview=False)
+        if await aiopath.exists(des_path):
+            await aioremove(des_path)
 
-
-section_dict = {'General': '🗒', 'Video': '🎞', 'Audio': '🔊', 'Text': '🔠', 'Menu': '🗃'}
-def parseinfo(out):
+SECTION_DICT = {'General': '🗒️', 'Video': '🎞️', 'Audio': '🔊', 'Text': '🔠', 'Menu': '🗃️'}
+def parse_info(out):
+    """
+    Parses the MediaInfo output into a formatted string.
+    """
     tc = ''
     trigger = False
     for line in out.split('\n'):
-        for section, emoji in section_dict.items():
+        for section, emoji in SECTION_DICT.items():
             if line.startswith(section):
                 trigger = True
-                if not line.startswith('General'):
-                    tc += '</pre><br>'
+                if section != 'General': tc += '</pre><br>'
                 tc += f"<h4>{emoji} {line.replace('Text', 'Subtitle')}</h4>"
                 break
         if trigger:
             tc += '<br><pre>'
             trigger = False
         else:
-            tc += line + '\n'
+            tc += f"{line}\n"
     tc += '</pre><br>'
     return tc
 
 
 async def mediainfo(_, message):
-    rply = message.reply_to_message
-    help_msg = "<b>By replying to media:</b>"
-    help_msg += f"\n<code>/{BotCommands.MediaInfoCommand[0]} or /{BotCommands.MediaInfoCommand[1]}" + " {media}" + "</code>"
-    help_msg += "\n\n<b>By reply/sending download link:</b>"
-    help_msg += f"\n<code>/{BotCommands.MediaInfoCommand[0]} or /{BotCommands.MediaInfoCommand[1]}" + " {link}" + "</code>"
-    if len(message.command) > 1 or rply and rply.text:
-        link = rply.text if rply else message.command[1]
-        return await gen_mediainfo(message, link)
-    elif rply:
-        if file := next(
-            (
-                i
-                for i in [
-                    rply.document,
-                    rply.video,
-                    rply.audio,
-                    rply.voice,
-                    rply.animation,
-                    rply.video_note,
-                ]
-                if i is not None
-            ),
-            None,
-        ):
-            return await gen_mediainfo(message, None, file, rply)
+    """
+    Entry point for the mediainfo command.
+    """
+    reply = message.reply_to_message
+    help_msg = (
+        "<b>Usage:</b>\n"
+        f"Reply to a media file with <code>/{BotCommands.MediaInfoCommand[0]}</code>.\n\n"
+        "<b>Or provide a download link:</b>\n"
+        f"<code>/{BotCommands.MediaInfoCommand[0]} [link]</code>"
+    )
+
+    if len(message.command) > 1 or (reply and reply.text):
+        link = reply.text if reply else message.command[1]
+        await gen_mediainfo(message, link)
+    elif reply:
+        media_obj = next((m for m in [reply.document, reply.video, reply.audio, reply.voice, reply.animation, reply.video_note] if m), None)
+        if media_obj:
+            await gen_mediainfo(message, None, media_obj, reply)
         else:
-            return await sendMessage(message, help_msg)
+            await sendMessage(message, help_msg)
     else:
-        return await sendMessage(message, help_msg)
+        await sendMessage(message, help_msg)
 
 bot.add_handler(MessageHandler(mediainfo, filters=command(BotCommands.MediaInfoCommand) & CustomFilters.authorized & ~CustomFilters.blacklisted))

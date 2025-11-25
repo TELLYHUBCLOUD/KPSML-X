@@ -17,7 +17,12 @@ from pyrogram.handlers import MessageHandler, CallbackQueryHandler
 from pyrogram.filters import command, regex
 
 
-GENRES_EMOJI = {"Action": "👊", "Adventure": choice(['🪂', '🧗‍♀']), "Comedy": "🤣", "Drama": " 🎭", "Ecchi": choice(['💋', '🥵']), "Fantasy": choice(['🧞', '🧞‍♂', '🧞‍♀','🌗']), "Hentai": "🔞", "Horror": "☠", "Mahou Shoujo": "☯", "Mecha": "🤖", "Music": "🎸", "Mystery": "🔮", "Psychological": "♟", "Romance": "💞", "Sci-Fi": "🛸", "Slice of Life": choice(['☘','🍁']), "Sports": "⚽️", "Supernatural": "🫧", "Thriller": choice(['🥶', '🔪','🤯'])}
+GENRES_EMOJI = {
+    "Action": "👊", "Adventure": "ጀጀ", "Comedy": "🤣", "Drama": "🎭", "Ecchi": "💋",
+    "Fantasy": "🧞", "Hentai": "🔞", "Horror": "☠️", "Mahou Shoujo": "☯️", "Mecha": "🤖",
+    "Music": "🎸", "Mystery": "🔮", "Psychological": "♟️", "Romance": "💞", "Sci-Fi": "🛸",
+    "Slice of Life": "☘️", "Sports": "⚽", "Supernatural": "🫧", "Thriller": "🔪"
+}
 
 ANIME_GRAPHQL_QUERY = """
 query ($id: Int, $idMal: Int, $search: String) {
@@ -47,8 +52,6 @@ query ($id: Int, $idMal: Int, $search: String) {
     seasonYear
     episodes
     duration
-    chapters
-    volumes
     countryOfOrigin
     source
     hashtag
@@ -65,27 +68,21 @@ query ($id: Int, $idMal: Int, $search: String) {
     genres
     synonyms
     averageScore
-    meanScore
     popularity
-    trending
     favourites
     tags {
       name
-      description
       rank
     }
     relations {
       edges {
         node {
-          id
           title {
             romaji
             english
-            native
           }
           format
           status
-          source
           averageScore
           siteUrl
         }
@@ -110,38 +107,251 @@ query ($id: Int, $idMal: Int, $search: String) {
          siteUrl
       }
     }
-    isAdult
-    nextAiringEpisode {
-      airingAt
-      timeUntilAiring
-      episode
+    siteUrl
+  }
+}
+"""
+URL = 'https://graphql.anilist.co'
+
+async def anilist(_, msg, aniid=None, u_id=None):
+    if not aniid:
+        user_id = msg.from_user.id
+        squery = (msg.text).split(' ', 1)
+        if len(squery) == 1:
+            await sendMessage(msg, "Provide an AniList ID, Anime Name, or MyAnimeList ID.")
+            return
+        vars_ = {'search': squery[1]}
+    else:
+        user_id = int(u_id)
+        vars_ = {'id': aniid}
+
+    json_data = rpost(URL, json={'query': ANIME_GRAPHQL_QUERY, 'variables': vars_}).json()
+    anime_resp = json_data.get('data', {}).get('Media')
+
+    if not anime_resp:
+        await sendMessage(msg, "No results found.")
+        return
+
+    ro_title = anime_resp['title']['romaji']
+    na_title = anime_resp['title']['native']
+    en_title = anime_resp['title']['english']
+    format_ = anime_resp.get('format', 'N/A').capitalize()
+    status = anime_resp.get('status', 'N/A').capitalize()
+    year = anime_resp.get('seasonYear', 'N/A')
+
+    start_date = "N/A"
+    if sd := anime_resp.get('startDate'):
+        if sd.get('day') and sd.get('year'):
+            start_date = f"{month_name[sd['month']]} {sd['day']}, {sd['year']}"
+
+    end_date = "N/A"
+    if ed := anime_resp.get('endDate'):
+        if ed.get('day') and ed.get('year'):
+            end_date = f"{month_name[ed['month']]} {ed['day']}, {ed['year']}"
+
+    season = f"{anime_resp.get('season', '').capitalize()} {year}"
+
+    country = "N/A"
+    if country_code := anime_resp.get('countryOfOrigin'):
+        country_data = conn.get(alpha_2=country_code)
+        country = f"{country_data.flag} {country_data.name}" if country_data else country_code
+
+    episodes = anime_resp.get('episodes', 'N/A')
+    duration = f"{get_readable_time(anime_resp['duration']*60)}" if anime_resp.get('duration') else "N/A"
+    avg_score = f"{anime_resp.get('averageScore', 0)}%"
+    genres = ", ".join(f"{GENRES_EMOJI.get(g, '')} #{g.replace(' ', '_')}" for g in anime_resp.get('genres', []))
+    studios = ", ".join(f'<a href="{s["siteUrl"]}">{s["name"]}</a>' for s in anime_resp.get('studios', {}).get('nodes', []))
+    source = anime_resp.get('source', 'N/A')
+    hashtag = anime_resp.get('hashtag', 'N/A')
+    synonyms = ", ".join(anime_resp.get('synonyms', []))
+    site_url = anime_resp.get('siteUrl')
+
+    trailer = None
+    if trailer_data := anime_resp.get('trailer'):
+        if trailer_data.get('site') == "youtube":
+            trailer = f"https://youtu.be/{trailer_data.get('id')}"
+
+    updated_at = datetime.fromtimestamp(anime_resp['updatedAt']).strftime('%d %B, %Y')
+    description = anime_resp.get('description', 'N/A')
+    if len(description) > 500:
+        description = f"{description[:500]}..."
+
+    popularity = anime_resp.get('popularity', 0)
+    favourites = anime_resp.get('favourites', 0)
+    site_id = anime_resp.get('id')
+    cover_img = anime_resp.get('coverImage', {}).get('large')
+    title_img = f"https://img.anili.st/media/{site_id}"
+
+    btns = ButtonMaker()
+    btns.ubutton("🎬 AniList Info", site_url, 'header')
+    if trailer:
+        btns.ubutton("🎞️ Trailer", trailer, 'header')
+    btns.ibutton("📑 Reviews", f"anime {user_id} rev {site_id}")
+    btns.ibutton("🎯 Tags", f"anime {user_id} tags {site_id}")
+    btns.ibutton("🧬 Relations", f"anime {user_id} rel {site_id}")
+    btns.ibutton("📊 Streaming", f"anime {user_id} sts {site_id}")
+    btns.ibutton("👥 Characters", f"anime {user_id} cha {site_id}")
+
+    user_template = user_data.get(user_id, {}).get('ani_temp') or config_dict.get('ANIME_TEMPLATE')
+
+    try:
+        template = user_template.format(**locals()).replace('<br>', '')
+    except Exception as e:
+        LOGGER.error(f"AniList template error: {e}")
+        template = config_dict.get('ANIME_TEMPLATE', "No template available.")
+
+    if aniid:
+        return template, btns.build_menu(3)
+
+    try:
+        await sendMessage(msg, template, btns.build_menu(3), photo=title_img)
+    except Exception:
+        await sendMessage(msg, template, btns.build_menu(3), photo='https://te.legra.ph/file/8a5155c0fc61cc2b9728c.jpg')
+
+async def setAnimeButtons(_, query):
+    user_id = query.from_user.id
+    data = query.data.split()
+    site_id = data[3]
+
+    if user_id != int(data[1]):
+        await query.answer("This is not for you!", show_alert=True)
+        return
+
+    await query.answer()
+
+    json_data = rpost(URL, json={'query': ANIME_GRAPHQL_QUERY, 'variables': {'id': site_id}}).json()
+    anime_resp = json_data.get('data', {}).get('Media')
+
+    if not anime_resp:
+        await editMessage(query.message, "Anime not found.")
+        return
+
+    btns = ButtonMaker()
+    btns.ibutton("⬅️ Back", f"anime {data[1]} home {site_id}")
+
+    action = data[2]
+    msg = ""
+
+    if action == "tags":
+        msg = "<b>Tags:</b>\n\n" + "\n".join(f"<a href='https://anilist.co/search/anime?genres={q(t['name'])}'>{t['name']}</a> {t['rank']}%" for t in anime_resp.get('tags', []))
+    elif action == "sts":
+        msg = "<b>External & Streaming Links:</b>\n\n" + "\n".join(f'<a href="{link["url"]}">{link["site"]}</a>' for link in anime_resp.get('externalLinks', []))
+    elif action == "rev":
+        msg = "<b>Reviews:</b>\n\n" + "\n\n".join(f'<a href="{r["siteUrl"]}">{r["summary"]}</a>\n<b>Score:</b> <code>{r["score"]} / 100</code> by <i>{r["user"]["name"]}</i>' for r in anime_resp.get('reviews', {}).get('nodes', [])[:8])
+    elif action == "rel":
+        msg = "<b>Relations:</b>\n\n" + "\n\n".join(
+            f'<a href="{edge["node"]["siteUrl"]}">{edge["node"]["title"]["english"] or edge["node"]["title"]["romaji"]}</a>\n'
+            f'<b>Format</b>: <code>{edge["node"]["format"].capitalize()}</code> | <b>Status</b>: <code>{edge["node"]["status"].capitalize()}</code>\n'
+            f'<b>Score</b>: <code>{edge["node"]["averageScore"]}%</code> | <b>Relation</b>: <code>{edge.get("relationType", "N/A").capitalize()}</code>'
+            for edge in anime_resp.get('relations', {}).get('edges', [])
+        )
+    elif action == "cha":
+        msg = "<b>Characters:</b>\n\n" + "\n\n".join(
+            f'• <a href="{edge["node"]["siteUrl"]}">{edge["node"]["name"]["full"]}</a> ({edge["node"]["name"]["native"]})\n'
+            f'<b>Role:</b> {edge["role"].capitalize()}'
+            for edge in anime_resp.get('characters', {}).get('edges', [])[:8]
+        )
+    elif action == "home":
+        msg, btns = await anilist(None, query.message, site_id, data[1])
+        await editMessage(query.message, msg, btns)
+        return
+
+    await editMessage(query.message, msg, btns.build_menu(1))
+
+CHARACTER_GRAPHQL_QUERY = """
+query ($id: Int, $search: String) {
+  Character(id: $id, search: $search) {
+    id
+    name {
+      full
+      native
     }
-    airingSchedule {
+    image {
+      large
+    }
+    description(asHtml: false)
+    siteUrl
+    favourites
+    media(page: 1, perPage: 8) {
+      nodes {
+        title {
+          romaji
+          english
+        }
+        type
+        format
+        siteUrl
+      }
+    }
+  }
+}
+"""
+
+MANGA_GRAPHQL_QUERY = """
+query ($id: Int, $idMal: Int, $search: String) {
+  Media(id: $id, idMal: $idMal, type: MANGA, search: $search) {
+    id
+    idMal
+    title {
+      romaji
+      english
+      native
+    }
+    format
+    status(version: 2)
+    description(asHtml: false)
+    startDate {
+      year
+      month
+      day
+    }
+    endDate {
+      year
+      month
+      day
+    }
+    chapters
+    volumes
+    countryOfOrigin
+    source
+    updatedAt
+    coverImage {
+      large
+    }
+    bannerImage
+    genres
+    synonyms
+    averageScore
+    popularity
+    favourites
+    tags {
+      name
+    }
+    relations {
       edges {
         node {
-          airingAt
-          timeUntilAiring
-          episode
+          title {
+            romaji
+            english
+          }
+        }
+        relationType
+      }
+    }
+    characters(perPage: 8) {
+      nodes {
+        name {
+          full
         }
       }
     }
-    externalLinks {
-      url
-      site
-    }
-    rankings {
-      rank
-      year
-      context
-    }
-    reviews {
-      nodes {
-        summary
-        rating
-        score
-        siteUrl
-        user {
-          name
+    staff {
+      edges {
+        role
+        node {
+          name {
+            full
+          }
         }
       }
     }
@@ -150,309 +360,113 @@ query ($id: Int, $idMal: Int, $search: String) {
 }
 """
 
-character_query = """
-query ($id: Int, $search: String) {
-    Character (id: $id, search: $search) {
-        id
-        name {
-            first
-            last
-            full
-            native
-        }
-        siteUrl
-        image {
-            large
-        }
-        description
-    }
-}
-"""
 
-manga_query = """
-query ($id: Int,$search: String) { 
-    Media (id: $id, type: MANGA,search: $search) { 
-        id
-        title {
-            romaji
-            english
-            native
-        }
-        description (asHtml: false)
-        startDate{
-            year
-        }
-        type
-        format
-        status
-        siteUrl
-        averageScore
-        genres
-        bannerImage
-    }
-}
-"""
+async def search_character(_, msg):
+    squery = msg.text.split(' ', 1)
+    if len(squery) == 1:
+        await sendMessage(msg, "Provide a character name.")
+        return
 
-url = 'https://graphql.anilist.co'
-sptext = ""
+    vars_ = {'search': squery[1]}
+    json_data = rpost(URL, json={'query': CHARACTER_GRAPHQL_QUERY, 'variables': vars_}).json()
+    char_resp = json_data.get('data', {}).get('Character')
 
-async def anilist(_, msg, aniid=None, u_id=None):
-    if not aniid:
-        user_id = msg.from_user.id
-        squery = (msg.text).split(' ', 1)
-        if len(squery) == 1:
-            await sendMessage(msg, "<i>Provide AniList ID / Anime Name / MyAnimeList ID</i>")
-            return
-        vars = {'search' : squery[1]}
-    else:
-        user_id = int(u_id)
-        vars = {'id' : aniid}
-    if (
-        animeResp := rpost(
-            url, json={'query': ANIME_GRAPHQL_QUERY, 'variables': vars}
-        )
-        .json()['data']
-        .get('Media', None)
-    ):
-        ro_title = animeResp['title']['romaji']
-        na_title = animeResp['title']['native']
-        en_title = animeResp['title']['english']
-        if format := animeResp['format']:
-            format = format.capitalize()
-        if status := animeResp['status']:
-            status = status.capitalize()
-        year = animeResp['seasonYear'] or 'N/A'
-        try:
-            sd = animeResp['startDate']
-            if sd['day'] and sd['year']: startdate = f"{month_name[sd['month']]} {sd['day']}, {sd['year']}"
-        except Exception:
-            startdate = ""
-        try:
-            ed = animeResp['endDate']
-            if ed['day'] and ed['year']: enddate = f"{month_name[ed['month']]} {ed['day']}, {ed['year']}"
-        except Exception:
-            enddate = ""
-        season = f"{animeResp['season'].capitalize()} {animeResp['seasonYear']}"
-        conname = (conn.get(alpha_2=animeResp['countryOfOrigin'])).name
-        try:
-            flagg = (conn.get(alpha_2=animeResp['countryOfOrigin'])).flag
-            country = f"{flagg} #{conname}"
-        except AttributeError:
-            country = f"#{conname}"
-        episodes = animeResp.get('episodes', 'N/A')
-        try:
-            duration = f"{get_readable_time(animeResp['duration']*60)}"
-        except Exception:
-            duration = "N/A"
-        avgscore = f"{animeResp['averageScore']}%" or ''
-        genres = ", ".join(f"{GENRES_EMOJI[x]} #{x.replace(' ', '_').replace('-', '_')}" for x in animeResp['genres'])
-        studios = ", ".join(f"""<a href="{x['siteUrl']}">{x['name']}</a>""" for x in animeResp['studios']['nodes'])
-        source = animeResp['source'] or '-'
-        hashtag = animeResp['hashtag'] or 'N/A'
-        synonyms = ", ".join(animeResp['synonyms']) or ''
-        siteurl = animeResp.get('siteUrl')
-        trailer = animeResp.get('trailer', None)
-        if trailer and trailer.get('site') == "youtube":
-            trailer = f"https://youtu.be/{trailer.get('id')}"
-        postup = datetime.fromtimestamp(animeResp['updatedAt']).strftime('%d %B, %Y')
-        description = animeResp.get('description', 'N/A')
-        if len(description) > 500:  
-            description = f"{description[:500]}...."
-        popularity = animeResp['popularity'] or ''
-        trending = animeResp['trending'] or ''
-        favourites = animeResp['favourites'] or ''
-        siteid = animeResp.get('id')
-        bannerimg = animeResp['bannerImage'] or ''
-        coverimg = animeResp['coverImage']['large'] or ''
-        title_img = f"https://img.anili.st/media/{siteid}"
-        btns = ButtonMaker()
-        btns.ubutton("AniList Info 🎬", siteurl, 'header')
-        btns.ibutton("Reviews 📑", f"anime {user_id} rev {siteid}")
-        btns.ibutton("Tags 🎯", f"anime {user_id} tags {siteid}")
-        btns.ibutton("Relations 🧬", f"anime {user_id} rel {siteid}")
-        btns.ibutton("Streaming Sites 📊", f"anime {user_id} sts {siteid}")
-        btns.ibutton("Characters 👥️️", f"anime {user_id} cha {siteid}")
-        if trailer:
-            btns.ubutton("Trailer 🎞", trailer, 'header')
-        aniListTemp = ''
-        if user_id in user_data:
-            aniListTemp = user_data[user_id].get('ani_temp', '')
-        if not aniListTemp:
-            aniListTemp = config_dict['ANIME_TEMPLATE']
-        try:
-            template = aniListTemp.format(**locals()).replace('<br>', '')
-        except Exception as e:
-            template = config_dict['ANIME_TEMPLATE']
-            LOGGER.error(f"AniList Error: {e}")
-        if aniid:
-            return template, btns.build_menu(3)
-        try:
-            await sendMessage(msg, template, btns.build_menu(3), photo=title_img)
-        except Exception:
-            await sendMessage(msg, template, btns.build_menu(3), photo='https://te.legra.ph/file/8a5155c0fc61cc2b9728c.jpg')
-  
-  
-async def setAnimeButtons(client, query):
-    message = query.message
-    user_id = query.from_user.id
-    data = query.data
-    data = data.split()
-    siteid = data[3]
+    if not char_resp:
+        await sendMessage(msg, "Character not found.")
+        return
+
+    description = char_resp.get('description', 'N/A').replace('~!', '').replace('!~', '')
+    if len(description) > 450:
+        description = f"{description[:450]}..."
+
+    media = "\n".join(f'<b><a href="{m["siteUrl"]}">{m["title"]["english"] or m["title"]["romaji"]}</a></b> ({m["format"].capitalize()})'
+                      for m in char_resp.get('media', {}).get('nodes', []))
+
+    caption = (f'<b>{char_resp["name"]["full"]} ({char_resp["name"]["native"]})</b>\n\n'
+               f'{description}\n\n'
+               f'<b>Media:</b>\n{media}')
+
     btns = ButtonMaker()
-    btns.ibutton("⌫ Back", f"anime {data[1]} home {siteid}")
-    if user_id != int(data[1]):
-        await query.answer(text="Not Yours!", show_alert=True)
+    btns.ubutton("ℹ️ More Info", char_resp.get('siteUrl'))
+
+    await sendMessage(msg, caption, btns.build_menu(1), photo=char_resp.get('image', {}).get('large'))
+
+
+async def search_manga(_, msg):
+    squery = msg.text.split(' ', 1)
+    if len(squery) == 1:
+        await sendMessage(msg, "Provide a manga name.")
         return
-    await query.answer()
-    if data[2] == "tags":
-        aniTag = rpost(url, json={'query': ANIME_GRAPHQL_QUERY, 'variables': {'id' : siteid}}).json()['data'].get('Media', None)
-        msg = "<b>Tags :</b>\n\n" + "\n".join(
-            f"""<a href="https://anilist.co/search/anime?genres={q(x['name'])}">{x['name']}</a> {x['rank']}%"""
-            for x in aniTag['tags']
-        )
-    elif data[2] == "sts":
-        links = rpost(url, json={'query': ANIME_GRAPHQL_QUERY, 'variables': {'id' : siteid}}).json()['data'].get('Media', None)
-        msg = "<b>External & Streaming Links :</b>\n\n" + "\n".join(
-            f"""<a href="{x['url']}">{x['site']}</a>"""
-            for x in links['externalLinks']
-        )
-    elif data[2] == "rev":
-        animeResp = rpost(url, json={'query': ANIME_GRAPHQL_QUERY, 'variables': {'id' : siteid}}).json()['data'].get('Media', None)
-        reList = animeResp['reviews']['nodes']
-        msg = "<b>Reviews :</b>\n\n" + "\n\n".join(
-            f"""<a href="{x['siteUrl']}">{x['summary']}</a>\n<b>Score :</b> <code>{x['score']} / 100</code>\n<i>By {x['user']['name']}</i>"""
-            for x in reList[:8]
-        )
-    elif data[2] == "rel":
-        animeResp = rpost(url, json={'query': ANIME_GRAPHQL_QUERY, 'variables': {'id' : siteid}}).json()['data'].get('Media', None)
-        msg = "<b>Relations :</b>\n\n" + "\n\n".join(
-            f"""<a href="{x['node']['siteUrl']}">{x['node']['title']['english']}</a> ({x['node']['title']['romaji']})\n<b>Format</b>: <code>{x['node']['format'].capitalize()}</code>\n<b>Status</b>: <code>{x['node']['status'].capitalize()}</code>\n<b>Average Score</b>: <code>{x['node']['averageScore']}%</code>\n<b>Source</b>: <code>{x['node']['source'].capitalize()}</code>\n<b>Relation Type</b>: <code>{x.get('relationType', 'N/A').capitalize()}</code>"""
-            for x in animeResp['relations']['edges']
-        )
-    elif data[2] == "cha":
-        animeResp = rpost(url, json={'query': ANIME_GRAPHQL_QUERY, 'variables': {'id' : siteid}}).json()['data'].get('Media', None)
-        msg = "<b>List of Characters :</b>\n\n" + "\n\n".join(
-            f"""• <a href="{x['node']['siteUrl']}">{x['node']['name']['full']}</a> ({x['node']['name']['native']})\n<b>Role :</b> {x['role'].capitalize()}"""
-            for x in (animeResp['characters']['edges'])[:8]
-        )
-    elif data[2] == "home":
-        msg, btns = await anilist(client, message, siteid, data[1])
-        await editMessage(message, msg, btns)
+
+    vars_ = {'search': squery[1]}
+    json_data = rpost(URL, json={'query': MANGA_GRAPHQL_QUERY, 'variables': vars_}).json()
+    manga_resp = json_data.get('data', {}).get('Media')
+
+    if not manga_resp:
+        await sendMessage(msg, "Manga not found.")
         return
-    await editMessage(message, msg, btns.build_menu(1))
-    return
 
+    ro_title = manga_resp['title']['romaji']
+    na_title = manga_resp['title']['native']
+    en_title = manga_resp['title']['english']
+    format_ = manga_resp.get('format', 'N/A').capitalize()
+    status = manga_resp.get('status', 'N/A').capitalize()
 
-async def character(_, message, aniid=None, u_id=None):
-    global sptext
-    rlp_mk = None
-    if not aniid:
-        search = message.text.split(' ', 1)
-        if len(search) == 1:
-            await sendMessage(message, '<b>Format :</b>\n<code>/character</code> <i>[search AniList Character]</i>') 
-            return
-        vars = {'search': search[1]}
-        user_id = message.from_user.id
-    else:
-        vars = {'id': aniid}
-        user_id = int(u_id)
-    if (
-        json := rpost(url, json={'query': character_query, 'variables': vars})
-        .json()['data']
-        .get('Character', None)
-    ):
-        msg = f"<b>{json.get('name').get('full')}</b> (<code>{json.get('name').get('native')}</code>)\n\n"
-        description = json['description']
-        site_url = json.get('siteUrl')
-        siteid = json.get('id')
-        if '~!' in description and '!~' in description: #Spoiler
-            btn = ButtonMaker()
-            sptext = description.split('~!', 1)[1].rsplit('!~', 1)[0].replace('~!', '').replace('!~', '')
-            btn.ibutton("🔍 View Spoiler", f"cha {user_id} spoil {siteid}")
-            rlp_mk = btn.build_menu(1)
-            description = description.split('~!', 1)[0]
-        if len(description) > 700:  
-            description = f"{description[:700]}...."
-        msg += markdown(description).replace('<p>', '').replace('</p>', '')
-        if image := json.get('image', None):
-            img = image.get('large')
-        if aniid:
-            return msg, rlp_mk
-        if img: 
-            await sendMessage(message, msg, rlp_mk, img)
-        else: 
-            await sendMessage(message, msg)
+    start_date = "N/A"
+    if sd := manga_resp.get('startDate'):
+        if sd.get('day') and sd.get('year'):
+            start_date = f"{month_name[sd['month']]} {sd['day']}, {sd['year']}"
 
+    end_date = "N/A"
+    if ed := manga_resp.get('endDate'):
+        if ed.get('day') and ed.get('year'):
+            end_date = f"{month_name[ed['month']]} {ed['day']}, {ed['year']}"
 
-async def setCharacButtons(client, query):
-    global sptext
-    message = query.message
-    user_id = query.from_user.id
-    data = query.data
-    data = data.split()
+    country = "N/A"
+    if country_code := manga_resp.get('countryOfOrigin'):
+        country_data = conn.get(alpha_2=country_code)
+        country = f"{country_data.flag} {country_data.name}" if country_data else country_code
+
+    chapters = manga_resp.get('chapters', 'N/A')
+    volumes = manga_resp.get('volumes', 'N/A')
+    avg_score = f"{manga_resp.get('averageScore', 0)}%"
+    genres = ", ".join(f"{GENRES_EMOJI.get(g, '')} #{g.replace(' ', '_')}" for g in manga_resp.get('genres', []))
+    source = manga_resp.get('source', 'N/A').capitalize()
+    synonyms = ", ".join(manga_resp.get('synonyms', []))
+
+    description = manga_resp.get('description', 'N/A')
+    if len(description) > 500:
+        description = f"{description[:500]}..."
+
+    caption = (f'<b>{en_title} ({ro_title})</b>\n'
+               f'<b>Native:</b> {na_title}\n\n'
+               f'<b>Format:</b> {format_}\n'
+               f'<b>Status:</b> {status}\n'
+               f'<b>Start Date:</b> {start_date}\n'
+               f'<b>End Date:</b> {end_date}\n'
+               f'<b>Country:</b> {country}\n'
+               f'<b>Chapters:</b> {chapters}\n'
+               f'<b>Volumes:</b> {volumes}\n'
+               f'<b>Score:</b> {avg_score}\n'
+               f'<b>Source:</b> {source}\n'
+               f'<b>Genres:</b> {genres}\n'
+               f'<b>Synonyms:</b> {synonyms}\n\n'
+               f'<b>Description:</b>\n{description}')
+
     btns = ButtonMaker()
-    btns.ibutton("⌫ Back", f"cha {data[1]} home {data[3]}")
-    if user_id != int(data[1]):
-        await query.answer(text="Not Yours!", show_alert=True)
-        return
-    elif data[2] == "spoil":
-        await query.answer("Alert !! Shh")
-        if len(sptext) > 900:
-            sptext = f"{sptext[:900]}..."
-        await editMessage(message, f"<b>Spoiler Ahead :</b>\n\n<tg-spoiler>{markdown(sptext).replace('<p>', '').replace('</p>', '')}</tg-spoiler>", btns.build_menu(1))
-    elif data[2] == "home":
-        await query.answer()
-        msg, btns = await character(client, message, data[3], data[1])
-        await editMessage(message, msg, btns)
+    btns.ubutton("ℹ️ More Info", manga_resp.get('siteUrl'))
 
-
-async def manga(_, message):
-    search = message.text.split(' ', 1)
-    if len(search) == 1:
-        await sendMessage(message, '<b>Format :</b>\n<code>/manga</code> <i>[search manga]</i>') 
-        return
-    search = search[1]
-    variables = {'search': search}
-    json = rpost(url, json={'query': manga_query, 'variables': variables}).json()['data'].get('Media', None)
-    msg = ''
-    if json:
-        title, title_native = json['title'].get('romaji', False), json['title'].get('native', False)
-        start_date, status, score = json['startDate'].get('year', False), json.get('status', False), json.get('averageScore', False)
-        if title:
-            msg += f"*{title}*"
-            if title_native:
-                msg += f"(`{title_native}`)"
-        if start_date: msg += f"\n*Start Date* - `{start_date}`"
-        if status: msg += f"\n*Status* - `{status}`"
-        if score: msg += f"\n*Score* - `{score}`"
-        msg += '\n*Genres* - '
-        for x in json.get('genres', []): msg += f"#{x}, "
-        msg = msg[:-2]
-        info = json['siteUrl']
-        buttons = ButtonMaker()
-        buttons.ubutton("AniList Info", info)
-        bimage = json.get("bannerImage", False)
-        image = f"https://img.anili.st/media/{json.get('id')}"
-        msg += f"\n\n_{json.get('description', None)}_"
-        msg = msg.replace('<br>', '').replace('<i>', '').replace('</i>', '')
-        try:
-            await sendMessage(message, msg, buttons.build_menu(1), image)
-        except Exception:
-            msg += f" [〽️]({image})"
-            await sendMessage(message, msg, buttons.build_menu(1))
+    await sendMessage(msg, caption, btns.build_menu(1), photo=manga_resp.get('coverImage', {}).get('large'))
 
 
 async def anime_help(_, message):
-    help_string = '''
-<u><b>🔍 Anime Help Guide</b></u>
-• /anime : <i>[search AniList]</i>
-• /character : <i>[search AniList Character]</i>
-• /manga : <i>[search manga]</i>'''
-    await sendMessage(message, help_string)
+    await sendMessage(message, '<u><b>🔍 Anime Help Guide</b></u>\n\n'
+                              '• /anime [AniList search]\n'
+                              '• /character [AniList character search]\n'
+                              '• /manga [manga search]')
 
 bot.add_handler(MessageHandler(anilist, filters=command(BotCommands.AniListCommand) & CustomFilters.authorized & ~CustomFilters.blacklisted))
-bot.add_handler(MessageHandler(character, filters=command("character") & CustomFilters.authorized & ~CustomFilters.blacklisted))
-bot.add_handler(MessageHandler(manga, filters=command("manga") & CustomFilters.authorized & ~CustomFilters.blacklisted))
+bot.add_handler(MessageHandler(search_character, filters=command(BotCommands.CharacterCommand) & CustomFilters.authorized & ~CustomFilters.blacklisted))
+bot.add_handler(MessageHandler(search_manga, filters=command(BotCommands.MangaCommand) & CustomFilters.authorized & ~CustomFilters.blacklisted))
 bot.add_handler(MessageHandler(anime_help, filters=command(BotCommands.AnimeHelpCommand) & CustomFilters.authorized & ~CustomFilters.blacklisted))
 bot.add_handler(CallbackQueryHandler(setAnimeButtons, filters=regex(r'^anime')))
-bot.add_handler(CallbackQueryHandler(setCharacButtons, filters=regex(r'^cha')))

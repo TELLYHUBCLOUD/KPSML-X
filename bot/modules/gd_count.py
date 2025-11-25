@@ -13,35 +13,43 @@ from bot.helper.themes import BotTheme
 
 @new_task
 async def countNode(_, message):
-    args = message.text.split()
-    if username := message.from_user.username:
-        tag = f"@{username}"
-    else:
-        tag = message.from_user.mention
+    """
+    Counts the files and folders in a Google Drive link.
+    """
+    user_tag = f"@{message.from_user.username}" if message.from_user.username else message.from_user.mention
 
+    args = message.text.split()
     link = args[1] if len(args) > 1 else ''
-    if len(link) == 0 and (reply_to := message.reply_to_message):
+    if not link and (reply_to := message.reply_to_message):
         link = reply_to.text.split(maxsplit=1)[0].strip()
 
-    if is_gdrive_link(link):
-        msg = await sendMessage(message, BotTheme('COUNT_MSG', LINK=link))
-        gd = GoogleDriveHelper()
-        name, mime_type, size, files, folders = await sync_to_async(gd.count, link)
-        if mime_type is None:
-            await sendMessage(message, name)
-            return
-        await deleteMessage(msg)
-        msg = BotTheme('COUNT_NAME', COUNT_NAME=name)
-        msg += BotTheme('COUNT_SIZE', COUNT_SIZE=get_readable_file_size(size))
-        msg += BotTheme('COUNT_TYPE', COUNT_TYPE=mime_type)
-        if mime_type == 'Folder':
-            msg += BotTheme('COUNT_SUB', COUNT_SUB=folders)
-            msg += BotTheme('COUNT_FILE', COUNT_FILE=files)
-        msg += BotTheme('COUNT_CC', COUNT_CC=tag)
-    else:
-        msg = 'Send Gdrive link along with command or by replying to the link by command'
+    if not is_gdrive_link(link):
+        await sendMessage(message, 'Please provide a GDrive link.')
+        return
+
+    status_msg = await sendMessage(message, f'Counting files in <code>{link}</code>...')
+
+    gd = GoogleDriveHelper()
+    name, mime_type, size, files, folders = await sync_to_async(gd.count, link)
+
+    await deleteMessage(status_msg)
+
+    if not mime_type:
+        await sendMessage(message, name)
+        return
+
+    msg = (
+        f'<b>Name:</b> {name}\n'
+        f'<b>Size:</b> {get_readable_file_size(size)}\n'
+        f'<b>Type:</b> {mime_type}\n'
+    )
+    if mime_type == 'Folder':
+        msg += f'<b>Folders:</b> {folders}\n'
+        msg += f'<b>Files:</b> {files}\n'
+
+    msg += f'<b>cc:</b> {user_tag}'
+
     await sendMessage(message, msg, photo='IMAGES')
 
 
-bot.add_handler(MessageHandler(countNode, filters=command(
-    BotCommands.CountCommand) & CustomFilters.authorized & ~CustomFilters.blacklisted))
+bot.add_handler(MessageHandler(countNode, filters=command(BotCommands.CountCommand) & CustomFilters.authorized & ~CustomFilters.blacklisted))

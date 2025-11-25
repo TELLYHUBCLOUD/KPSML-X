@@ -14,41 +14,71 @@ class QueueStatus:
         self.message = listener.message
 
     def gid(self):
+        """
+        Returns the GID of the download.
+        """
         return self.__gid
 
     def name(self):
+        """
+        Returns the name of the download.
+        """
         return self.__name
 
     def size(self):
+        """
+        Returns the total size of the download.
+        """
         return get_readable_file_size(self.__size)
 
     def status(self):
-        if self.__status == 'dl':
-            return MirrorStatus.STATUS_QUEUEDL
-        return MirrorStatus.STATUS_QUEUEUP
+        """
+        Returns the status of the download.
+        """
+        return MirrorStatus.STATUS_QUEUEDL if self.__status == 'dl' else MirrorStatus.STATUS_QUEUEUP
 
     def processed_bytes(self):
+        """
+        Returns the processed bytes of the download.
+        """
         return 0
 
     def progress(self):
+        """
+        Returns the progress of the download in percentage.
+        """
         return '0%'
 
     def speed(self):
+        """
+        Returns the speed of the download.
+        """
         return '0B/s'
 
     def eta(self):
+        """
+        Returns the estimated time remaining for the download to complete.
+        """
         return '-'
 
     def download(self):
+        """
+        Returns the download object.
+        """
         return self
 
     async def cancel_download(self):
-        LOGGER.info(f'Cancelling Queue{self.__status}: {self.__name}')
+        """
+        Cancels the download.
+        """
+        LOGGER.info(f'Cancelling queued {"download" if self.__status == "dl" else "upload"}: {self.__name}')
         if self.__status == 'dl':
-            await self.__listener.onDownloadError('task have been removed from queue/download')
+            await self.__listener.onDownloadError('Task removed from download queue.')
         else:
-            await self.__listener.onUploadError('task have been removed from queue/upload')
-
+            await self.__listener.onUploadError('Task removed from upload queue.')
 
     def eng(self):
+        """
+        Returns the engine status.
+        """
         return EngineStatus().STATUS_QUEUE
