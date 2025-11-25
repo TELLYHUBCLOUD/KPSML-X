@@ -40,7 +40,7 @@ if len(DATABASE_URL) == 0:
 
 if DATABASE_URL is not None:
     conn = MongoClient(DATABASE_URL)
-    db = conn.kpsmlx
+    db = conn.[f'tellykp{bot_id}']
     old_config = db.settings.deployConfig.find_one({'_id': bot_id})
     config_dict = db.settings.config.find_one({'_id': bot_id})
     if old_config is not None:
@@ -59,7 +59,7 @@ if UPGRADE_PACKAGES.lower() == 'true':
 
 UPSTREAM_REPO = environ.get('UPSTREAM_REPO', '')
 if len(UPSTREAM_REPO) == 0:
-    UPSTREAM_REPO = "https://github.com/Tamilupdates/KPSML-X"
+    UPSTREAM_REPO = "https://github.com/TELLYHUBCLOUD/KPSML-X"
 
 UPSTREAM_BRANCH = environ.get('UPSTREAM_BRANCH', '')
 if len(UPSTREAM_BRANCH) == 0:
