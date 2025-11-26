@@ -587,14 +587,8 @@ def uploadee(url):
 
 def terabox(url):
     try:
-         if not url or not isinstance(url, str):
-            raise DirectDownloadLinkException("Invalid URL provided")
-        if not url.startswith(('http://', 'https://')):
-            raise DirectDownloadLinkException("URL must start with http:// or https://")
         final_url = f"https://teraboxbotredirect.tellycloudapi.workers.dev/?url={url}"
         return final_url
-    except DirectDownloadLinkException:
-        raise
     except Exception as e:
         raise DirectDownloadLinkException(f"Failed to bypass Terabox URL: {str(e)}")
 
