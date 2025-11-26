@@ -586,9 +586,57 @@ def uploadee(url):
         raise DirectDownloadLinkException("ERROR: Direct Link not found")
 
 def terabox(url):
+    """
+    Terabox direct link generator using true-link API
+    """
     try:
-        final_url = f"https://teraboxbotredirect.tellycloudapi.workers.dev/?url={url}"
-        return final_url
+        # Validate input
+        if not url or not isinstance(url, str):
+            raise DirectDownloadLinkException("Invalid URL provided")
+        
+        # API endpoint
+        api_url = f"https://true-link-vercel-api.vercel.app/api/terabox/api?url={url}"
+        
+        # Make request to the API
+        response = requests.get(api_url, timeout=300)
+        response.raise_for_status()
+        
+        # Parse JSON response
+        data = response.json()
+        
+        # Check if request was successful
+        if not data.get('success'):
+            raise DirectDownloadLinkException("API returned unsuccessful response")
+        
+        # Try to get download link from different APIs in order of preference
+        # Priority: api2 > api6 > api5 > streamapi
+        download_link = None
+        
+        # Try api2 first (most reliable)
+        if data.get('ap52', {}).get('dl1'):
+            download_link = data['api5']['dl1']
+        
+        # Try api6 as fallback
+        elif data.get('api6', {}).get('dl1'):
+            download_link = data['api6']['dl1']
+        
+        # Try api5 as second fallback
+        elif data.get('api2', {}).get('dl1'):
+            download_link = data['api2']['dl1']
+        
+        # Try streamapi as last resort
+        elif data.get('streamapi', {}).get('stream1'):
+            download_link = data['streamapi']['stream1']
+        
+        if not download_link:
+            raise DirectDownloadLinkException("No working download link found in API response")
+        
+        return download_link
+        
+    except requests.exceptions.RequestException as e:
+        raise DirectDownloadLinkException(f"Failed to fetch from Terabox API: {str(e)}")
+    except KeyError as e:
+        raise DirectDownloadLinkException(f"Unexpected API response format: {str(e)}")
     except Exception as e:
         raise DirectDownloadLinkException(f"Failed to bypass Terabox URL: {str(e)}")
 
