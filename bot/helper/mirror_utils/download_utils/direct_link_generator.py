@@ -587,26 +587,11 @@ def uploadee(url):
 
 def terabox(url):
     try:
-        encoded = quote(url, safe='')
-        api_url = f"https://terabox-api.tellycloudapi.workers.dev/?url={encoded}"
-        resp = requests.get(api_url, timeout=30)
-        resp.raise_for_status()
-
-        data = resp.json()
-
-        # ✅ Corrected line
-        proxy = data.get("stream_link") or data.get("download_proxy") or data.get("download_link")
-
-        if not proxy:
-            raise DirectDownloadLinkException("API returned no valid URL")
-
-        return proxy
-
-    except DirectDownloadLinkException:
-        raise
+        encoded_url = quote(url)
+        final_url = f"https://teraboxbotredirect.tellycloudapi.workers.dev/?url={encoded_url}"
+        return final_url
     except Exception as e:
-        raise DirectDownloadLinkException(f"Failed to bypass Terabox URL: {e}")
-
+        raise DirectDownloadLinkException("Failed to bypass Terabox URL")
 
 
 
