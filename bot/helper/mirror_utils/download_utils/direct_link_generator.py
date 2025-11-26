@@ -7,7 +7,7 @@ from uuid import uuid4
 from hashlib import sha256
 from time import sleep
 from re import findall, match, search
-
+import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from lxml.etree import HTML
