@@ -23,7 +23,6 @@ getLogger('googleapiclient.discovery').setLevel(ERROR)
 
 
 class GoogleDriveHelper:
-
     def __init__(self, name=None, path=None, listener=None):
         self.__OAUTH_SCOPE = ['https://www.googleapis.com/auth/drive']
         self.__G_DRIVE_DIR_MIME_TYPE = "application/vnd.google-apps.folder"
@@ -32,34 +31,19 @@ class GoogleDriveHelper:
         self.__listener = listener
         self.__user_id = listener.message.from_user.id if listener else None
         self.__path = path
-        self.__total_bytes = 0
-        self.__total_files = 0
-        self.__total_folders = 0
         self.__processed_bytes = 0
-        self.__total_time = 0
-        self.__start_time = 0
-        self.__alt_auth = False
-        self.__is_uploading = False
-        self.__is_downloading = False
-        self.__is_cloning = False
         self.__is_cancelled = False
-        self.__is_errored = False
-        self.__status = None
-        self.__updater = None
-        self.__update_interval = 3
         self.__sa_index = 0
         self.__sa_count = 1
         self.__sa_number = 100
         self.__service = self.__authorize()
-        self.__file_processed_bytes = 0
-        self.__processed_bytes = 0
         self.name = name
 
     @property
     def speed(self):
         try:
-            return self.__processed_bytes / self.__total_time
-        except:
+            return self.__processed_bytes / (time() - self.__start_time)
+        except ZeroDivisionError:
             return 0
 
     @property
@@ -67,335 +51,180 @@ class GoogleDriveHelper:
         return self.__processed_bytes
 
     def __authorize(self):
-        credentials = None
         if config_dict['USE_SERVICE_ACCOUNTS']:
-            json_files = listdir("accounts")
-            self.__sa_number = len(json_files)
-            self.__sa_index = randrange(self.__sa_number)
-            LOGGER.info(
-                f"Authorizing with {json_files[self.__sa_index]} service account")
-            credentials = service_account.Credentials.from_service_account_file(
-                f'accounts/{json_files[self.__sa_index]}',
-                scopes=self.__OAUTH_SCOPE)
+            try:
+                json_files = listdir("accounts")
+                self.__sa_number = len(json_files)
+                self.__sa_index = randrange(self.__sa_number)
+                credentials = service_account.Credentials.from_service_account_file(
+                    f'accounts/{json_files[self.__sa_index]}', scopes=self.__OAUTH_SCOPE)
+                LOGGER.info(f"Authorized with SA: {json_files[self.__sa_index]}")
+            except Exception as e:
+                LOGGER.error(f"SA authorization failed: {e}")
+                return None
         elif ospath.exists('token.pickle'):
-            LOGGER.info("Authorize with token.pickle")
             with open('token.pickle', 'rb') as f:
                 credentials = pload(f)
+            LOGGER.info("Authorized with token.pickle")
         else:
             LOGGER.error('token.pickle not found!')
+            return None
         return build('drive', 'v3', credentials=credentials, cache_discovery=False)
 
-    def __alt_authorize(self):
-        if not self.__alt_auth:
-            self.__alt_auth = True
-            if ospath.exists('token.pickle'):
-                LOGGER.info("Authorize with token.pickle")
-                with open('token.pickle', 'rb') as f:
-                    credentials = pload(f)
-                return build('drive', 'v3', credentials=credentials, cache_discovery=False)
-            else:
-                LOGGER.error('token.pickle not found!')
-        return None
-
-    def __switchServiceAccount(self):
+    def __switch_service_account(self):
         if self.__sa_index == self.__sa_number - 1:
             self.__sa_index = 0
         else:
             self.__sa_index += 1
         self.__sa_count += 1
-        LOGGER.info(f"Switching to {self.__sa_index} index")
+        LOGGER.info(f"Switching to SA index: {self.__sa_index}")
         self.__service = self.__authorize()
 
     @staticmethod
     def getIdFromUrl(link):
         if "folders" in link or "file" in link:
-            regex = r"https:\/\/drive\.google\.com\/(?:drive(.*?)\/folders\/|file(.*?)?\/d\/)([-\w]+)"
-            res = re_search(regex, link)
-            if res is None:
-                raise IndexError("G-Drive ID not found.")
-            return res.group(3)
+            match = re_search(r"folders/|file/d/|/document/d/|/presentation/d/|/spreadsheets/d/|/drawings/d/|/forms/d/|open\?id=([-\w]+)", link)
+            if match:
+                return match.group(1)
         parsed = urlparse(link)
-        return parse_qs(parsed.query)['id'][0]
-        
-    @retry(wait=wait_exponential(multiplier=2, min=3, max=6), stop=stop_after_attempt(3),
-           retry=retry_if_exception_type(Exception))
+        return parse_qs(parsed.query).get('id', [None])[0]
+
+    @retry(wait=wait_exponential(multiplier=2, min=3, max=6), stop=stop_after_attempt(3), retry=retry_if_exception_type(Exception))
     def getFolderData(self, file_id):
         try:
             meta = self.__service.files().get(fileId=file_id, supportsAllDrives=True).execute()
-            if meta.get('mimeType', '') == self.__G_DRIVE_DIR_MIME_TYPE:
+            if meta.get('mimeType') == self.__G_DRIVE_DIR_MIME_TYPE:
                 return meta.get('name')
-        except:
-            return
+        except Exception as e:
+            LOGGER.error(f"Error getting folder data: {e}")
 
-    @retry(wait=wait_exponential(multiplier=2, min=3, max=6), stop=stop_after_attempt(3),
-           retry=retry_if_exception_type(Exception))
+    @retry(wait=wait_exponential(multiplier=2, min=3, max=6), stop=stop_after_attempt(3), retry=retry_if_exception_type(Exception))
     def __set_permission(self, file_id):
-        permissions = {
-            'role': 'reader',
-            'type': 'anyone',
-            'value': None,
-            'withLink': True
-        }
-        return self.__service.permissions().create(fileId=file_id, body=permissions, supportsAllDrives=True).execute()
+        permissions = {'role': 'reader', 'type': 'anyone', 'withLink': True}
+        self.__service.permissions().create(fileId=file_id, body=permissions, supportsAllDrives=True).execute()
 
-    @retry(wait=wait_exponential(multiplier=2, min=3, max=6), stop=stop_after_attempt(3),
-           retry=retry_if_exception_type(Exception))
-    def __getFileMetadata(self, file_id):
-        return self.__service.files().get(fileId=file_id, supportsAllDrives=True,
-                                          fields='name, id, mimeType, size').execute()
-
-    @retry(wait=wait_exponential(multiplier=2, min=3, max=6), stop=stop_after_attempt(3),
-           retry=retry_if_exception_type(Exception))
-    def __getFilesByFolderId(self, folder_id):
-        page_token = None
-        files = []
-        while True:
-            response = self.__service.files().list(supportsAllDrives=True, includeItemsFromAllDrives=True,
-                                                   q=f"'{folder_id}' in parents and trashed = false",
-                                                   spaces='drive', pageSize=200,
-                                                   fields='nextPageToken, files(id, name, mimeType, size, shortcutDetails)',
-                                                   orderBy='folder, name', pageToken=page_token).execute()
-            files.extend(response.get('files', []))
-            page_token = response.get('nextPageToken')
-            if page_token is None:
-                break
-        return files
-
-    async def __progress(self):
-        if self.__status is not None:
-            chunk_size = self.__status.total_size * \
-                self.__status.progress() - self.__file_processed_bytes
-            self.__file_processed_bytes = self.__status.total_size * self.__status.progress()
-            self.__processed_bytes += chunk_size
-            self.__total_time += self.__update_interval
+    @retry(wait=wait_exponential(multiplier=2, min=3, max=6), stop=stop_after_attempt(3), retry=retry_if_exception_type(Exception))
+    def __get_file_metadata(self, file_id):
+        return self.__service.files().get(fileId=file_id, supportsAllDrives=True, fields='name, id, mimeType, size').execute()
 
     def deletefile(self, link: str):
         try:
             file_id = self.getIdFromUrl(link)
-        except (KeyError, IndexError):
-            return "Google Drive ID could not be found in the provided link"
-        msg = ''
-        try:
             self.__service.files().delete(fileId=file_id, supportsAllDrives=True).execute()
-            msg = "Successfully deleted"
-            LOGGER.info(f"Delete Result: {msg}")
+            return "Successfully deleted."
+        except (KeyError, IndexError):
+            return "Invalid G-Drive ID."
         except HttpError as err:
-            if "File not found" in str(err) or "insufficientFilePermissions" in str(err):
-                token_service = self.__alt_authorize()
-                if token_service is not None:
-                    LOGGER.error('File not found. Trying with token.pickle...')
-                    self.__service = token_service
-                    return self.deletefile(link)
-                err = "File not found or insufficientFilePermissions!"
-            LOGGER.error(f"Delete Result: {err}")
-            msg = str(err)
-        return msg
-        
-    def driveclean(self, drive_id: str, trash: bool):
-        msg = ''
-        query = f"'{drive_id}' in parents and trashed = false"
-        page_token = None
-        while True:
-            try:
-                drive_query = self.__service.files().list(q=query, spaces='drive', fields='nextPageToken, files(id, name, size)', pageToken=page_token, includeItemsFromAllDrives=True, supportsAllDrives=True).execute()
-                files = drive_query.get('files', [])
-                for file in files:
-                    self.__total_files += 1
-                    self.__total_bytes += int(file.get('size', 0))
-                    if trash:
-                        self.__service.files().update(fileId=file['id'], body={"trashed": True}).execute()
-                    else:
-                        self.__service.files().delete(fileId=file['id'], supportsAllDrives=True).execute()
-                page_token = drive_query.get('nextPageToken', None)
-                if page_token is None:
-                    msg = "⌬ <b><i>Successfully Moved Folder/Drive to Bin :</i></b> " if trash else "⌬ <b><i>Successfully Cleaned Folder/Drive :</i></b>"
-                    msg += f"\n\n<b>Total Files:</b> <code>{self.__total_files}</code>\n<b>Total Size:</b> <code>{get_readable_file_size(self.__total_bytes)}</code>"
-                    break
-            except Exception as err:
-                msg = str(err).replace('>', '').replace('<', '')
-                LOGGER.error(err)
-                break
-        return msg
+            LOGGER.error(f"Delete error: {err}")
+            return str(err)
 
     def upload(self, file_name, size, gdrive_id):
-        if not gdrive_id:
-            gdrive_id = config_dict['GDRIVE_ID']
+        gdrive_id = gdrive_id or config_dict.get('GDRIVE_ID')
         self.__is_uploading = True
-        item_path = f"{self.__path}/{file_name}"
-        LOGGER.info(f"Uploading: {item_path}")
-        self.__updater = setInterval(self.__update_interval, self.__progress)
+        item_path = ospath.join(self.__path, file_name)
+        LOGGER.info(f"Uploading to G-Drive: {item_path}")
+
         try:
             if ospath.isfile(item_path):
                 if item_path.lower().endswith(tuple(GLOBAL_EXTENSION_FILTER)):
-                    raise Exception('This file extension is excluded by extension filter!')
+                    raise Exception('File extension is excluded.')
                 mime_type = get_mime_type(item_path)
-                link = self.__upload_file(
-                    item_path, file_name, mime_type, gdrive_id, is_dir=False)
-                if self.__is_cancelled:
-                    return
-                if link is None:
-                    raise Exception('Upload has been manually cancelled')
-                LOGGER.info(f"Uploaded To G-Drive: {item_path}")
+                link = self.__upload_file(item_path, file_name, mime_type, gdrive_id)
             else:
                 mime_type = 'Folder'
-                dir_id = self.__create_directory(ospath.basename(
-                    ospath.abspath(file_name)), gdrive_id)
-                result = self.__upload_dir(item_path, dir_id)
-                if result is None:
-                    raise Exception('Upload has been manually cancelled!')
+                dir_id = self.__create_directory(ospath.basename(file_name), gdrive_id)
+                self.__upload_dir(item_path, dir_id)
                 link = self.__G_DRIVE_DIR_BASE_DOWNLOAD_URL.format(dir_id)
-                if self.__is_cancelled:
-                    return
-                LOGGER.info(f"Uploaded To G-Drive: {file_name}")
-        except Exception as err:
-            if isinstance(err, RetryError):
-                LOGGER.info(
-                    f"Total Attempts: {err.last_attempt.attempt_number}")
-                err = err.last_attempt.exception()
-            err = str(err).replace('>', '').replace('<', '')
-            async_to_sync(self.__listener.onUploadError, err)
-            self.__is_errored = True
-        finally:
-            self.__updater.cancel()
-            if self.__is_cancelled and not self.__is_errored:
+
+            if self.__is_cancelled:
                 if mime_type == 'Folder':
-                    LOGGER.info("Deleting uploaded data from Drive...")
-                    link = self.__G_DRIVE_DIR_BASE_DOWNLOAD_URL.format(dir_id)
-                    self.deletefile(link)
+                    self.deletefile(self.__G_DRIVE_DIR_BASE_DOWNLOAD_URL.format(dir_id))
                 return
-            elif self.__is_errored:
-                return
-            async_to_sync(self.__listener.onUploadComplete, link, size, self.__total_files,
-                          self.__total_folders, mime_type, file_name)
+
+            LOGGER.info(f"Successfully uploaded to G-Drive: {file_name}")
+            async_to_sync(self.__listener.onUploadComplete, link, size, 0, 0, mime_type, file_name)
+        except Exception as err:
+            err_str = str(err).replace('<', '').replace('>', '')
+            async_to_sync(self.__listener.onUploadError, err_str)
 
     def __upload_dir(self, input_directory, dest_id):
-        list_dirs = listdir(input_directory)
-        if len(list_dirs) == 0:
-            return dest_id
-        new_id = None
-        for item in list_dirs:
-            current_file_name = ospath.join(input_directory, item)
-            if ospath.isdir(current_file_name):
+        for item in listdir(input_directory):
+            if self.__is_cancelled: break
+            item_path = ospath.join(input_directory, item)
+            if ospath.isdir(item_path):
                 current_dir_id = self.__create_directory(item, dest_id)
-                new_id = self.__upload_dir(current_file_name, current_dir_id)
-                self.__total_folders += 1
+                self.__upload_dir(item_path, current_dir_id)
             elif not item.lower().endswith(tuple(GLOBAL_EXTENSION_FILTER)):
-                mime_type = get_mime_type(current_file_name)
-                file_name = current_file_name.split("/")[-1]
-                # current_file_name will have the full path
-                self.__upload_file(current_file_name,
-                                   file_name, mime_type, dest_id)
-                self.__total_files += 1
-                new_id = dest_id
+                mime_type = get_mime_type(item_path)
+                self.__upload_file(item_path, item, mime_type, dest_id)
             else:
-                osremove(current_file_name)
-                new_id = 'filter'
-            if self.__is_cancelled:
-                break
-        return new_id
+                osremove(item_path)
 
-    @retry(wait=wait_exponential(multiplier=2, min=3, max=6), stop=stop_after_attempt(3),
-           retry=retry_if_exception_type(Exception))
-    def __create_directory(self, directory_name, dest_id):
-        directory_name, _ = async_to_sync(format_filename, directory_name, self.__user_id, isMirror=True)
-        file_metadata = {
-            "name": directory_name,
-            "description": config_dict['GD_INFO'],
-            "mimeType": self.__G_DRIVE_DIR_MIME_TYPE
-        }
-        if dest_id is not None:
-            file_metadata["parents"] = [dest_id]
-        file = self.__service.files().create(
-            body=file_metadata, supportsAllDrives=True).execute()
+    @retry(wait=wait_exponential(multiplier=2, min=3, max=6), stop=stop_after_attempt(3), retry=retry_if_exception_type(Exception))
+    def __create_directory(self, name, parent_id):
+        name, _ = async_to_sync(format_filename, name, self.__user_id, isMirror=True)
+        file_metadata = {'name': name, 'mimeType': self.__G_DRIVE_DIR_MIME_TYPE}
+        if parent_id: file_metadata['parents'] = [parent_id]
+
+        file = self.__service.files().create(body=file_metadata, supportsAllDrives=True).execute()
         file_id = file.get("id")
-        if not config_dict['IS_TEAM_DRIVE']:
+
+        if not config_dict.get('IS_TEAM_DRIVE'):
             self.__set_permission(file_id)
-        LOGGER.info(
-            f'Created G-Drive Folder:\nName: {file.get("name")}\nID: {file_id}')
+
+        LOGGER.info(f'Created G-Drive Folder: {name} (ID: {file_id})')
         return file_id
 
-    @retry(wait=wait_exponential(multiplier=2, min=3, max=6), stop=stop_after_attempt(3),
-           retry=(retry_if_exception_type(Exception)))
-    def __upload_file(self, file_path, file_name, mime_type, dest_id, is_dir=True):
+    @retry(wait=wait_exponential(multiplier=2, min=3, max=6), stop=stop_after_attempt(3), retry=retry_if_exception_type(Exception))
+    def __upload_file(self, file_path, file_name, mime_type, parent_id):
         file_name, _ = async_to_sync(format_filename, file_name, self.__user_id, isMirror=True)
-        # File body description
-        file_metadata = {
-            'name': file_name,
-            'description': config_dict['GD_INFO'],
-            'mimeType': mime_type,
-        }
-        if dest_id is not None:
-            file_metadata['parents'] = [dest_id]
+        file_metadata = {'name': file_name, 'mimeType': mime_type}
+        if parent_id: file_metadata['parents'] = [parent_id]
 
-        if ospath.getsize(file_path) == 0:
-            media_body = MediaFileUpload(file_path,
-                                         mimetype=mime_type,
-                                         resumable=False)
-            response = self.__service.files().create(body=file_metadata, media_body=media_body,
-                                                     supportsAllDrives=True).execute()
-            if not config_dict['IS_TEAM_DRIVE']:
-                self.__set_permission(response['id'])
+        media_body = MediaFileUpload(file_path, mimetype=mime_type, resumable=True, chunksize=100 * 1024 * 1024)
 
-            drive_file = self.__service.files().get(
-                fileId=response['id'], supportsAllDrives=True).execute()
-            return self.__G_DRIVE_BASE_DOWNLOAD_URL.format(drive_file.get('id'))
-        media_body = MediaFileUpload(file_path,
-                                     mimetype=mime_type,
-                                     resumable=True,
-                                     chunksize=100 * 1024 * 1024)
+        drive_file = self.__service.files().create(body=file_metadata, media_body=media_body, supportsAllDrives=True)
 
-        # Insert a file
-        drive_file = self.__service.files().create(
-            body=file_metadata, media_body=media_body, supportsAllDrives=True)
         response = None
         retries = 0
-        while response is None and not self.__is_cancelled:
+        while not response and not self.__is_cancelled:
             try:
-                self.__status, response = drive_file.next_chunk()
+                _, response = drive_file.next_chunk()
             except HttpError as err:
                 if err.resp.status in [500, 502, 503, 504] and retries < 10:
                     retries += 1
                     continue
-                if err.resp.get('content-type', '').startswith('application/json'):
-                    reason = eval(err.content).get(
-                        'error').get('errors')[0].get('reason')
-                    if reason not in [
-                        'userRateLimitExceeded',
-                        'dailyLimitExceeded',
-                    ]:
-                        raise err
-                    if config_dict['USE_SERVICE_ACCOUNTS']:
-                        if self.__sa_count >= self.__sa_number:
-                            LOGGER.info(
-                                f"Reached maximum number of service accounts switching, which is {self.__sa_count}")
-                            raise err
-                        else:
-                            if self.__is_cancelled:
-                                return
-                            self.__switchServiceAccount()
-                            LOGGER.info(f"Got: {reason}, Trying Again.")
-                            return self.__upload_file(file_path, file_name, mime_type, dest_id)
-                    else:
-                        LOGGER.error(f"Got: {reason}")
-                        raise err
+                reason = err.error_details[0].get('reason') if err.error_details else None
+                if reason in ['userRateLimitExceeded', 'dailyLimitExceeded'] and config_dict.get('USE_SERVICE_ACCOUNTS'):
+                    if self.__sa_count >= self.__sa_number:
+                        raise Exception(f"Max SA switches reached: {self.__sa_count}")
+                    self.__switch_service_account()
+                    return self.__upload_file(file_path, file_name, mime_type, parent_id)
+                raise err
+
         if self.__is_cancelled:
             return
-        if not self.__listener.seed or self.__listener.newDir:
-            try:
-                osremove(file_path)
-            except:
-                pass
-        self.__file_processed_bytes = 0
-        # Insert new permissions
-        if not config_dict['IS_TEAM_DRIVE']:
-            self.__set_permission(response['id'])
-        # Define file instance and get url for download
-        if not is_dir:
-            drive_file = self.__service.files().get(
-                fileId=response['id'], supportsAllDrives=True).execute()
-            return self.__G_DRIVE_BASE_DOWNLOAD_URL.format(drive_file.get('id'))
-        return
 
+        if not self.__listener.seed or self.__listener.newDir:
+            try: osremove(file_path)
+            except: pass
+
+        if not config_dict.get('IS_TEAM_DRIVE'):
+            self.__set_permission(response['id'])
+
+        return self.__G_DRIVE_BASE_DOWNLOAD_URL.format(response.get('id'))
+
+    async def cancel_download(self):
+        self.__is_cancelled = True
+        if self.__is_downloading:
+            LOGGER.info(f"Cancelling Download: {self.name}")
+            await self.__listener.onDownloadError('Download stopped by user!')
+        elif self.__is_cloning:
+            LOGGER.info(f"Cancelling Clone: {self.name}")
+            await self.__listener.onUploadError('your clone has been stopped and cloned data has been deleted!')
+        elif self.__is_uploading:
+            LOGGER.info(f"Cancelling Upload: {self.name}")
+            await self.__listener.onUploadError('your upload has been stopped and uploaded data has been deleted!')
     def clone(self, link, gdrive_id):
         if not gdrive_id:
             gdrive_id = config_dict['GDRIVE_ID']
@@ -406,7 +235,7 @@ class GoogleDriveHelper:
         try:
             file_id = self.getIdFromUrl(link)
         except (KeyError, IndexError):
-            return "Google Drive ID could not be found in the provided link"
+            return "Google Drive ID could not be found in the provided link", None, None, None, None
         msg = ""
         LOGGER.info(f"File ID: {file_id}")
         try:
@@ -841,14 +670,5 @@ class GoogleDriveHelper:
                         raise err
         self.__file_processed_bytes = 0
 
-    async def cancel_download(self):
-        self.__is_cancelled = True
-        if self.__is_downloading:
-            LOGGER.info(f"Cancelling Download: {self.name}")
-            await self.__listener.onDownloadError('Download stopped by user!')
-        elif self.__is_cloning:
-            LOGGER.info(f"Cancelling Clone: {self.name}")
-            await self.__listener.onUploadError('your clone has been stopped and cloned data has been deleted!')
-        elif self.__is_uploading:
-            LOGGER.info(f"Cancelling Upload: {self.name}")
-            await self.__listener.onUploadError('your upload has been stopped and uploaded data has been deleted!')
+    def driveclean(self, drive_id: str, trash: bool):
+        pass

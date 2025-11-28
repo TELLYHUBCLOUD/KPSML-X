@@ -76,17 +76,17 @@ PAGE_NO = 1
 
 
 class MirrorStatus:
-    STATUS_UPLOADING = "📤 Upload"
-    STATUS_DOWNLOADING = "📥 Download"
-    STATUS_CLONING = "♻️ Clone"
-    STATUS_QUEUEDL = "💤 QueueDL"
-    STATUS_QUEUEUP = "💤 QueueUp"
-    STATUS_PAUSED = "⏸️ Pause"
-    STATUS_ARCHIVING = "🔐 Archive"
-    STATUS_EXTRACTING = "📂 Extract"
-    STATUS_SPLITTING = "✂️ Split"
-    STATUS_CHECKING = "📝 CheckUp"
-    STATUS_SEEDING = "🌱 Seed"
+    STATUS_UPLOADING = "📤 Uploading"
+    STATUS_DOWNLOADING = "📥 Downloading"
+    STATUS_CLONING = "♻️ Cloning"
+    STATUS_QUEUEDL = "💤 QueuedDL"
+    STATUS_QUEUEUP = "💤 QueuedUP"
+    STATUS_PAUSED = "⏸️ Paused"
+    STATUS_ARCHIVING = "🔐 Archiving"
+    STATUS_EXTRACTING = "📂 Extracting"
+    STATUS_SPLITTING = "✂️ Splitting"
+    STATUS_CHECKING = "📝 Checking"
+    STATUS_SEEDING = "🌱 Seeding"
     STATUS_METADATA = "ℹ️ Metadata"
     STATUS_ATTACHMENT = "📎 Attachment"
 

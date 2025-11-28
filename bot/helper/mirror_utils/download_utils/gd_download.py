@@ -13,29 +13,41 @@ from bot.helper.ext_utils.task_manager import is_queued, limit_checker, stop_dup
 
 
 async def add_gd_download(link, path, listener, newname, org_link):
+    """
+    Adds a Google Drive download task.
+    """
     drive = GoogleDriveHelper()
     name, mime_type, size, _, _ = await sync_to_async(drive.count, link)
+
     if is_share_link(org_link):
-        cget().request('POST', "https://wzmlcontribute.vercel.app/contribute", headers={"Content-Type": "application/json"}, data=jdumps({"name": name, "link": org_link, "size": get_readable_file_size(size)}))
+        try:
+            cget().request('POST', "https://wzmlcontribute.vercel.app/contribute",
+                           headers={"Content-Type": "application/json"},
+                           data=jdumps({"name": name, "link": org_link, "size": get_readable_file_size(size)}))
+        except Exception as e:
+            LOGGER.warning(f"Failed to report link contribution: {e}")
+
     if mime_type is None:
         await sendMessage(listener.message, name)
         return
 
     name = newname or name
     gid = token_hex(5)
+
     msg, button = await stop_duplicate_check(name, listener)
     if msg:
         await sendMessage(listener.message, msg, button)
         return
+
     if limit_exceeded := await limit_checker(size, listener, isDriveLink=True):
         await sendMessage(listener.message, limit_exceeded)
         return
+
     added_to_queue, event = await is_queued(listener.uid)
     if added_to_queue:
-        LOGGER.info(f"Added to Queue/Download: {name}")
+        LOGGER.info(f"Added to queue/download: {name}")
         async with download_dict_lock:
-            download_dict[listener.uid] = QueueStatus(
-                name, size, gid, listener, 'dl')
+            download_dict[listener.uid] = QueueStatus(name, size, gid, listener, 'dl')
         await listener.onDownloadStart()
         await sendStatusMessage(listener.message)
         await event.wait()
@@ -48,16 +60,15 @@ async def add_gd_download(link, path, listener, newname, org_link):
 
     drive = GoogleDriveHelper(name, path, listener)
     async with download_dict_lock:
-        download_dict[listener.uid] = GdriveStatus(
-            drive, size, listener.message, gid, 'dl', listener.upload_details)
+        download_dict[listener.uid] = GdriveStatus(drive, size, listener.message, gid, 'dl', listener.upload_details)
 
     async with queue_dict_lock:
         non_queued_dl.add(listener.uid)
 
     if from_queue:
-        LOGGER.info(f'Start Queued Download from GDrive: {name}')
+        LOGGER.info(f'Starting queued GDrive download: {name}')
     else:
-        LOGGER.info(f"Download from GDrive: {name}")
+        LOGGER.info(f"Starting GDrive download: {name}")
         await listener.onDownloadStart()
         await sendStatusMessage(listener.message)
 

@@ -12,30 +12,34 @@ from bot.helper.telegram_helper.bot_commands import BotCommands
 
 @new_task
 async def shell(_, message):
-    cmd = message.text.split(maxsplit=1)
-    if len(cmd) == 1:
-        await sendMessage(message, 'No command to execute was given.')
+    """
+    Executes a shell command.
+    """
+    cmd_parts = message.text.split(maxsplit=1)
+    if len(cmd_parts) == 1:
+        await sendMessage(message, 'No command to execute was provided.')
         return
-    cmd = cmd[1]
+
+    cmd = cmd_parts[1]
     stdout, stderr, _ = await cmd_exec(cmd, shell=True)
-    reply = ''
-    if len(stdout) != 0:
-        reply += f"*Stdout*\n{stdout}\n"
-        LOGGER.info(f"Shell - {cmd} - {stdout}")
-    if len(stderr) != 0:
-        reply += f"*Stderr*\n{stderr}"
-        LOGGER.error(f"Shell - {cmd} - {stderr}")
+
+    reply = ""
+    if stdout:
+        reply += f"<b>Output:</b>\n<code>{stdout}</code>\n"
+        LOGGER.info(f"Shell command '{cmd}' executed with output: {stdout}")
+    if stderr:
+        reply += f"<b>Error:</b>\n<code>{stderr}</code>"
+        LOGGER.error(f"Shell command '{cmd}' executed with error: {stderr}")
+
     if len(reply) > 3000:
         with BytesIO(str.encode(reply)) as out_file:
             out_file.name = "shell_output.txt"
             await sendFile(message, out_file)
-    elif len(reply) != 0:
+    elif reply:
         await sendMessage(message, reply)
     else:
-        await sendMessage(message, 'No Reply')
+        await sendMessage(message, 'Command executed with no output.')
 
 
-bot.add_handler(MessageHandler(shell, filters=command(
-    BotCommands.ShellCommand) & CustomFilters.sudo))
-bot.add_handler(EditedMessageHandler(shell, filters=command(
-    BotCommands.ShellCommand) & CustomFilters.sudo))
+bot.add_handler(MessageHandler(shell, filters=command(BotCommands.ShellCommand) & CustomFilters.sudo))
+bot.add_handler(EditedMessageHandler(shell, filters=command(BotCommands.ShellCommand) & CustomFilters.sudo))
