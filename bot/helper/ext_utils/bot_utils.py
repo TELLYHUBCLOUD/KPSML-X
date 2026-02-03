@@ -214,9 +214,9 @@ def get_readable_message():
         if download.status() not in [MirrorStatus.STATUS_SPLITTING, MirrorStatus.STATUS_SEEDING]:
             msg += BotTheme('USER',User=download.message.from_user.first_name)
             msg += BotTheme('ID', Id=download.message.from_user.id)
-            msg += BotTheme('PROCESSED', Processed=f"{download.processed_bytes()} of {download.size()}")
             msg += BotTheme('STATUS', Status=f"{download.status()} {download.progress()}", Url=msg_link)
             msg += BotTheme('BAR', Bar=f"{get_progress_bar_string(download.progress())}")
+            msg += BotTheme('PROCESSED', Processed=f"{download.processed_bytes()} of {download.size()}")            
             msg += BotTheme('ETA', Eta=download.eta())
             msg += BotTheme('SPEED', Speed=download.speed())
             msg += BotTheme('ELAPSED', Elapsed=get_readable_time(elapsed))
