@@ -137,12 +137,12 @@ def handleIndex(index, dic):
     return index
 
 def get_progress_bar_string(pct):
-    pct = float(str(pct).strip('%'))
+    pct = float(str(pct).strip("%"))
     p = min(max(pct, 0), 100)
-    cFull = int(p // 10)
-    p_str = '█' * cFull
-    p_str += '▒' * (10 - cFull)
-    return f"[{p_str}]"
+    cFull = int(p // 10)  # 12 blocks total (same as first code)
+    p_str = "⬢" * cFull
+    p_str += "⬡" * (12 - cFull)
+    return f"❨{p_str}❩"  # Same style as first code
 
 
 def get_all_versions():
