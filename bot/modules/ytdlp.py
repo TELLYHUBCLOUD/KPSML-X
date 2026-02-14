@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import ast
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler
 from pyrogram.filters import command, regex, user
 from asyncio import sleep, wait_for, Event, wrap_future
@@ -490,7 +491,9 @@ async def _ytdl(client, message, isLeech=False, sameDir=None, bulk=[]):
             elif value.lower() == 'false':
                 value = False
             elif value.startswith(('{', '[', '(')) and value.endswith(('}', ']', ')')):
-                value = eval(value)
+                # Use ast.literal_eval for safe evaluation of literal structures (dicts, lists, tuples)
+                # to prevent arbitrary code execution from user-provided options.
+                value = ast.literal_eval(value)
             options[key] = value
 
         options['playlist_items'] = '0'
